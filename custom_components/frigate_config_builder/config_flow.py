@@ -47,7 +47,6 @@ from .const import (
     CONF_RETAIN_DETECTIONS,
     CONF_RETAIN_MOTION,
     CONF_RETAIN_SNAPSHOTS,
-    CONF_SELECTED_CAMERAS,
     CONF_SEMANTIC_SEARCH,
     CONF_SEMANTIC_SEARCH_MODEL,
     DEFAULT_BIRDSEYE_MODE,
@@ -367,15 +366,11 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get the options flow for this handler."""
-        return FrigateConfigBuilderOptionsFlow(config_entry)
+        return FrigateConfigBuilderOptionsFlow()
 
 
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
     """Handle options flow for camera selection."""
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -388,11 +383,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # M1: Simple placeholder - no cameras discovered yet
-        # M3: Will show camera selection checkboxes
-
-        # Get current options
-        current_selected = self.config_entry.options.get(CONF_SELECTED_CAMERAS, [])
+        # Get current options (self.config_entry is provided by OptionsFlow base class)
         auto_groups = self.config_entry.options.get("auto_groups_from_areas", True)
 
         return self.async_show_form(
