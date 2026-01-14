@@ -1,8 +1,8 @@
 # Frigate Config Builder
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/yourusername/frigate-config-builder.svg)](https://github.com/yourusername/frigate-config-builder/releases)
-[![License](https://img.shields.io/github/license/yourusername/frigate-config-builder.svg)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/release/ojiudezue/frigate-config-builder.svg)](https://github.com/ojiudezue/frigate-config-builder/releases)
+[![License](https://img.shields.io/github/license/ojiudezue/frigate-config-builder.svg)](LICENSE)
 
 A Home Assistant integration that automatically discovers cameras from your HA integrations and generates complete [Frigate NVR](https://frigate.video/) configuration files.
 
@@ -38,13 +38,13 @@ A Home Assistant integration that automatically discovers cameras from your HA i
 
 1. Open HACS in Home Assistant
 2. Click the three dots menu → **Custom repositories**
-3. Add `https://github.com/yourusername/frigate-config-builder` as an **Integration**
+3. Add `https://github.com/ojiudezue/frigate-config-builder` as an **Integration**
 4. Click **Install**
 5. Restart Home Assistant
 
 ### Manual
 
-1. Download the latest release from [GitHub Releases](https://github.com/yourusername/frigate-config-builder/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/ojiudezue/frigate-config-builder/releases)
 2. Extract to `config/custom_components/frigate_config_builder`
 3. Restart Home Assistant
 

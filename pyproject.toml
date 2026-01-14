@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/frigate-config-builder"
-"Bug Reports" = "https://github.com/yourusername/frigate-config-builder/issues"
-"Source" = "https://github.com/yourusername/frigate-config-builder"
+"Homepage" = "https://github.com/ojiudezue/frigate-config-builder"
+"Bug Reports" = "https://github.com/ojiudezue/frigate-config-builder/issues"
+"Source" = "https://github.com/ojiudezue/frigate-config-builder"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

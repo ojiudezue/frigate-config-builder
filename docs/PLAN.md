@@ -5,6 +5,9 @@
 **Project:** HACS Integration for Home Assistant  
 **Purpose:** Auto-discover cameras from HA integrations and generate complete Frigate NVR configuration files  
 **Repository:** `frigate-config-builder`  
+**GitHub:** https://github.com/ojiudezue/frigate-config-builder  
+**Local Path:** `/Users/ojiudezue/Library/CloudStorage/OneDrive-Personal/2025/frigate-config-builder`  
+**Target HA:** MadroneHAOS  
 
 ---
 
@@ -233,7 +236,24 @@ custom_components/frigate_config_builder/
 
 | File | Purpose | Location |
 |------|---------|----------|
-| Working Frigate config | Reference output | `/mnt/user-data/outputs/frigate.yml` |
-| Discovery script | UniFi Protect URL extraction | `/mnt/user-data/outputs/generate_frigate_config.py` |
-| Quality plan | Test definitions | `QUALITY.md` |
-| Build plan | Architecture & snippets | `BUILD.md` |
+| Working Frigate config | Reference output | `docs/reference/frigate_reference.yml` |
+| Discovery script | UniFi Protect URL extraction | `docs/reference/generate_frigate_config.py` |
+| Quality plan | Test definitions | `docs/QUALITY.md` |
+| Build plan | Architecture & snippets | `docs/BUILD.md` |
+
+---
+
+## Development Workflow
+
+```bash
+# Local development
+cd /Users/ojiudezue/Library/CloudStorage/OneDrive-Personal/2025/frigate-config-builder
+
+# After changes, commit and push
+git add .
+git commit -m "Description of changes"
+git push
+
+# To test on MadroneHAOS, copy custom_components to HA config
+# Or use symlink / HACS custom repo pointing to GitHub
+```
