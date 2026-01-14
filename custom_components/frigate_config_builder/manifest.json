@@ -3,10 +3,11 @@
   "name": "Frigate Config Builder",
   "codeowners": ["@ojiudezue"],
   "config_flow": true,
+  "dependencies": [],
   "documentation": "https://github.com/ojiudezue/frigate-config-builder",
   "integration_type": "service",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/ojiudezue/frigate-config-builder/issues",
-  "requirements": [],
+  "requirements": ["aiofiles>=23.0.0"],
   "version": "0.1.0"
 }

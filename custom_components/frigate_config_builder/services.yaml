@@ -1,0 +1,15 @@
+generate:
+  name: Generate Frigate Config
+  description: Generate the Frigate configuration file from discovered cameras.
+  fields:
+    push:
+      name: Push to Frigate
+      description: Push the configuration to Frigate API and restart.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+refresh_cameras:
+  name: Refresh Cameras
+  description: Re-run camera discovery to find new or changed cameras.
