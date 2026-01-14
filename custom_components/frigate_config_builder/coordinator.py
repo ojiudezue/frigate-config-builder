@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import CONF_SELECTED_CAMERAS, DOMAIN
+from .discovery import DiscoveryCoordinator
 from .generator import FrigateConfigGenerator
 from .output import push_to_frigate, write_config_file
 
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
-    from .models import DiscoveredCamera
+    from .discovery import DiscoveredCamera
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(minutes=30),  # Periodic discovery refresh
         )
         self.entry = entry
+        self.discovery = DiscoveryCoordinator(hass, entry)
         self.generator = FrigateConfigGenerator(hass, entry)
 
         # State tracking
@@ -42,16 +44,11 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._previous_camera_ids: set[str] = set()
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from all discovery adapters.
+        """Fetch data from all discovery adapters."""
+        _LOGGER.debug("Running camera discovery")
 
-        For Milestone 1, this is a placeholder that returns empty data.
-        Camera discovery will be implemented in Milestone 2.
-        """
-        _LOGGER.debug("Running camera discovery (M1: placeholder)")
-
-        # M1: No discovery yet, return empty
-        # M2: Will integrate discovery coordinator here
-        self.discovered_cameras = []
+        # Run discovery across all adapters
+        self.discovered_cameras = await self.discovery.discover_all()
 
         # Check if cameras changed (new or removed)
         current_ids = {cam.id for cam in self.discovered_cameras}
@@ -61,17 +58,22 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for cam in self.discovered_cameras:
             cam.is_new = cam.id not in self._previous_camera_ids
 
-        # Detect staleness
+        # Detect staleness (cameras changed since last generation)
         if self._previous_camera_ids and current_ids != self._previous_camera_ids:
             self.config_stale = True
             _LOGGER.info("Camera configuration has changed, config is stale")
 
         self._previous_camera_ids = current_ids
 
+        # Get adapter status for diagnostics
+        adapter_status = self.discovery.get_adapter_status()
+
         return {
             "cameras": self.discovered_cameras,
             "camera_count": len(self.discovered_cameras),
             "selected_count": len(selected & current_ids),
+            "adapter_status": adapter_status,
+            "new_cameras": [c.id for c in self.discovered_cameras if c.is_new],
         }
 
     async def async_generate_config(self, push: bool = False) -> str:
@@ -87,9 +89,18 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         start = time.monotonic()
 
-        # Filter to selected cameras only
+        # Get selected cameras (default to all if none selected)
         selected_ids = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
-        cameras = [c for c in self.discovered_cameras if c.id in selected_ids]
+        
+        if selected_ids:
+            cameras = [c for c in self.discovered_cameras if c.id in selected_ids]
+        else:
+            # If no selection made yet, use all discovered cameras
+            cameras = self.discovered_cameras
+            _LOGGER.info(
+                "No cameras explicitly selected, using all %d discovered cameras",
+                len(cameras),
+            )
 
         # Generate config
         config_yaml = await self.generator.generate(cameras)
@@ -120,7 +131,9 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def selected_cameras(self) -> list[DiscoveredCamera]:
         """Return only selected cameras."""
         selected_ids = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
-        return [c for c in self.discovered_cameras if c.id in selected_ids]
+        if selected_ids:
+            return [c for c in self.discovered_cameras if c.id in selected_ids]
+        return self.discovered_cameras
 
     @property
     def cameras_selected_count(self) -> int:
@@ -131,3 +144,23 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def cameras_discovered_count(self) -> int:
         """Return count of discovered cameras."""
         return len(self.discovered_cameras)
+
+    def get_cameras_by_source(self) -> dict[str, list[DiscoveredCamera]]:
+        """Return discovered cameras grouped by source."""
+        by_source: dict[str, list[DiscoveredCamera]] = {}
+        for camera in self.discovered_cameras:
+            source = camera.source
+            if source not in by_source:
+                by_source[source] = []
+            by_source[source].append(camera)
+        return by_source
+
+    def get_cameras_by_area(self) -> dict[str, list[DiscoveredCamera]]:
+        """Return discovered cameras grouped by HA area."""
+        by_area: dict[str, list[DiscoveredCamera]] = {}
+        for camera in self.discovered_cameras:
+            area = camera.area or "Ungrouped"
+            if area not in by_area:
+                by_area[area] = []
+            by_area[area].append(camera)
+        return by_area
