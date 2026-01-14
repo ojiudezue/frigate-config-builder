@@ -5,12 +5,14 @@ import logging
 import os
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import aiohttp
 
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .base import CameraAdapter, DiscoveredCamera
 
@@ -259,26 +261,31 @@ class UniFiProtectAdapter(CameraAdapter):
         """
         # Try to get the stream URL via HTTP API call
         try:
-            # Use hass's aiohttp client session for internal API calls
-            session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+            # FIXED: Use the proper import instead of self.hass.helpers
+            session = async_get_clientsession(self.hass)
             
             # For internal HA API calls in HA OS, use supervisor endpoint
             supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
             
+            # URL-encode the entity_id to handle dots properly
+            encoded_entity_id = quote(entity_id, safe='')
+            
             if supervisor_token:
                 # Running in HA OS - use supervisor endpoint
-                url = f"http://supervisor/core/api/camera_stream_source/{entity_id}"
+                url = f"http://supervisor/core/api/camera_stream_source/{encoded_entity_id}"
                 headers = {"Authorization": f"Bearer {supervisor_token}"}
             else:
                 # Running in other modes - use external API
                 # Get a long-lived access token from hass.data if available
                 # This is a fallback and may not work in all setups
                 base_url = str(self.hass.config.api.base_url) if self.hass.config.api else "http://localhost:8123"
-                url = f"{base_url}/api/camera_stream_source/{entity_id}"
+                url = f"{base_url}/api/camera_stream_source/{encoded_entity_id}"
                 
                 # Try to get access token from auth (may not work)
                 headers = {}
                 # Without a token, this will likely fail, but we have a fallback below
+            
+            _LOGGER.debug("Attempting to get stream URL from: %s", url)
             
             try:
                 async with session.get(
