@@ -1,0 +1,12 @@
+{
+  "domain": "frigate_config_builder",
+  "name": "Frigate Config Builder",
+  "codeowners": ["@ojiudezue"],
+  "config_flow": true,
+  "documentation": "https://github.com/ojiudezue/frigate-config-builder",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/ojiudezue/frigate-config-builder/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

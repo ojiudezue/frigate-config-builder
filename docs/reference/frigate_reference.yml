@@ -1,0 +1,589 @@
+# Frigate Configuration
+# Generated: 2026-01-12
+# NVR IP: 192.168.15.173
+# UniFi Protect cameras auto-generated via generate_frigate_config.py
+
+mqtt:
+  host: 192.168.13.13
+  user: mqttuser
+  password: Verycool9277@^
+
+ffmpeg:
+  global_args: -hide_banner -loglevel warning -threads 0
+  hwaccel_args: preset-vaapi
+  output_args:
+    record: preset-record-ubiquiti
+
+detectors:
+  coral:
+    type: edgetpu
+    device: usb
+
+record:
+  enabled: true
+  alerts:
+    retain:
+      days: 30
+  detections:
+    retain:
+      days: 30
+  continuous:
+    days: 0
+  motion:
+    days: 7
+
+snapshots:
+  enabled: true
+  retain:
+    default: 30
+
+detect:
+  fps: 5
+  enabled: true
+
+audio:
+  enabled: true
+
+birdseye:
+  enabled: true
+  mode: objects
+  width: 1280
+  height: 720
+
+go2rtc:
+  streams:
+    # ========================================
+    # NON-UNIFI CAMERAS (Reolink, Amcrest)
+    # ========================================
+    ReolinkStudyBPorchPTZ:
+      - ffmpeg:http://192.168.12.170/flv?port=1935&app=bcs&stream=channel0_main.bcs&user=admin&password=Verycool9277#video=copy#audio=copy#audio=opus
+      - rtsp://192.168.13.166/Preview_01_sub
+    ReolinkStudyBPorchPTZ_sub:
+      - ffmpeg:http://192.168.12.170/flv?port=1935&app=bcs&stream=channel0_ext.bcs&user=admin&password=Verycool9277
+    ArmCrest:
+      - rtsp://Okosisi:Verycool9277@^@192.168.15.96/cam/realmonitor?channel=1&subtype=0
+      - ffmpeg:ArmCrest#audio=aac
+    # NEW: Amcrest ASH41-B (uses channel 0)
+    ArmCrestASH41B:
+      - rtsp://admin:Verycool9227@192.168.12.143/cam/realmonitor?channel=0&subtype=0
+      - ffmpeg:ArmCrestASH41B#audio=aac
+
+    # ========================================
+    # UNIFI PROTECT CAMERAS
+    # ========================================
+    back_yard:
+      - rtspx://192.168.15.173:7441/YtWweG33tkuJk0u3
+    doorbell_lite:
+      - rtspx://192.168.15.173:7441/1Fi0Q31bevTa9OnZ
+    family_room:
+      - rtspx://192.168.15.173:7441/rzm84U7a3dWlPZg1
+    foyer_fisheye:
+      - rtspx://192.168.15.173:7441/XdYHW3HvuHrte44j
+    front_door_aerial:
+      - rtspx://192.168.15.173:7441/Sd7QdthUU6M1CLef
+    front_side_ptz:
+      - rtspx://192.168.15.173:7441/wjSzYjD6MF0qMSYf
+    g5_bullet:
+      - rtspx://192.168.15.173:7441/dzOqyrZ0kTAqwfmo
+    garage_a:
+      - rtspx://192.168.15.173:7441/LimzvgUEin7vTGsf
+    garage_b:
+      - rtspx://192.168.15.173:7441/FwxZzWVEN6qTjOW8
+    hot_tub:
+      - rtspx://192.168.15.173:7441/eFkmA9r13T2WtHgO
+    madrone_g6_entry:
+      - rtspx://192.168.15.173:7441/X1fWVOR0uuYI8qWZ
+    madrone_g6_entry_package:
+      - rtspx://192.168.15.173:7441/twUfAShnaKW9VktI
+    master_hallway:
+      - rtspx://192.168.15.173:7441/Ct2pXoW7RMaXhD5m
+    playroom:
+      - rtspx://192.168.15.173:7441/qq1I9r6E9CdtLrko
+    pool_equipment:
+      - rtspx://192.168.15.173:7441/lhlu81GWmfr1Z3Nk
+    rear_ptz:
+      - rtspx://192.168.15.173:7441/msj8Vpjh0yVFdH9O
+    staircase:
+      - rtspx://192.168.15.173:7441/e3Z86Xw8X25WQJ07
+    stairs_top:
+      - rtspx://192.168.15.173:7441/wx5uOEkkRFxlFaKt
+    upstairs_hall:
+      - rtspx://192.168.15.173:7441/JpdcHdn5ZJCq0S7P
+    utilities_ptz:
+      - rtspx://192.168.15.173:7441/DoN8uX07TEedqnI1
+
+cameras:
+  # ========================================
+  # NON-UNIFI CAMERAS (Reolink, Amcrest)
+  # ========================================
+  ReolinkStudyBPorchPTZ:
+    ffmpeg:
+      inputs:
+        - path: rtsp://admin:Verycool9277@192.168.12.170:554/h264Preview_01_main
+          input_args: preset-rtsp-restream
+          roles:
+            - record
+            - audio
+        - path: rtsp://admin:Verycool9277@192.168.12.170:554/h264Preview_01_sub
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+      output_args:
+        record: preset-record-generic-audio-aac
+    detect:
+      enabled: true
+      width: 640
+      height: 480
+
+  ArmCrest: # <------ Original Amcrest at 192.168.15.96
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://Okosisi:Verycool9277@^@192.168.15.96/cam/realmonitor?channel=1&subtype=0
+          roles:
+            - record
+            - audio
+        - path: rtsp://Okosisi:Verycool9277@^@192.168.15.96/cam/realmonitor?channel=1&subtype=1
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 704
+      height: 480
+
+  ArmCrestASH41B: # <------ NEW Amcrest ASH41-B at 192.168.12.143 (channel 0)
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://admin:Verycool9227@192.168.12.143/cam/realmonitor?channel=0&subtype=0
+          roles:
+            - record
+            - audio
+        - path: rtsp://admin:Verycool9227@192.168.12.143/cam/realmonitor?channel=0&subtype=1
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 704
+      height: 480
+
+  # ========================================
+  # UNIFI PROTECT CAMERAS
+  # ========================================
+  back_yard: # <------ Back Yard
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/YtWweG33tkuJk0u3?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/kTV6T19pfApN4U7D?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  doorbell_lite: # <------ Garage Doorbell Lite
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/1Fi0Q31bevTa9OnZ?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/1Fi0Q31bevTa9OnZ?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  family_room: # <------ Family Room
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/rzm84U7a3dWlPZg1?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/t1z2Zp1RrxZwwvuw?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 480
+
+  foyer_fisheye: # <------ Foyer Fisheye
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/XdYHW3HvuHrte44j?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/M3EYqF4OS1er5Dar?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 720
+      height: 720
+
+  front_door_aerial: # <------ Front Door Aerial
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/Sd7QdthUU6M1CLef?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/2tRG3420BgmHeUQ6?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  front_side_ptz: # <------ Front Side PTZ
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/wjSzYjD6MF0qMSYf?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/qcPMGNG8yaLcnYDI?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  g5_bullet: # <------ G5 Bullet
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/dzOqyrZ0kTAqwfmo?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/7oBnQkfNMYfXoU5a?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  garage_a: # <------ Garage A
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/LimzvgUEin7vTGsf?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/0tE6FgeTPUfbWNqj?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  garage_b: # <------ Garage B
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/FwxZzWVEN6qTjOW8?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/OFG169gNuIiessfr?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  hot_tub: # <------ Hot tub
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/eFkmA9r13T2WtHgO?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/BCE1pp4Ix8POhWpG?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  madrone_g6_entry: # <------ Madrone G6 Entry (NEW)
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/X1fWVOR0uuYI8qWZ?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/nBYmY2gM08M23gU3?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 352
+      height: 480
+
+  madrone_g6_entry_package: # <------ Madrone G6 Entry Package Camera (NEW)
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/twUfAShnaKW9VktI?enableSrtp
+          roles:
+            - record
+            - audio
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 400
+      height: 300
+
+  master_hallway: # <------ Master Hallway
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/Ct2pXoW7RMaXhD5m?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/CnafclekYDrtjFSX?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  playroom: # <------ Playroom
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/qq1I9r6E9CdtLrko?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/yXEIy0QY84XYWhPT?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  pool_equipment: # <------ Pool Equipment
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/lhlu81GWmfr1Z3Nk?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/sBkvPDIkTR3bdtFf?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  rear_ptz: # <------ Rear PTZ
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/msj8Vpjh0yVFdH9O?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/1XucryF1zjAgIEVm?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  staircase: # <------ Camera_Protect_GarageHallway
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/e3Z86Xw8X25WQJ07?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/MPVUVXuJah1UhiTD?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  stairs_top: # <------ Stairs - top
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/wx5uOEkkRFxlFaKt?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/Z0NA46Am2QpaQexC?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  upstairs_hall: # <------ Upstairs Hall
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/JpdcHdn5ZJCq0S7P?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/FwJ97D7bDC9UVK7m?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+  utilities_ptz: # <------ Utilities PTZ
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsps://192.168.15.173:7441/DoN8uX07TEedqnI1?enableSrtp
+          roles:
+            - record
+            - audio
+        - path: rtsps://192.168.15.173:7441/Lz2trFFC8D4Yd6Hv?enableSrtp
+          roles:
+            - detect
+      hwaccel_args: preset-vaapi
+    detect:
+      enabled: true
+      width: 640
+      height: 360
+
+telemetry:
+  network_interfaces:
+    - enp2s0
+    - enp3s0
+  stats:
+    intel_gpu_stats: true
+    network_bandwidth: true
+  version_check: true
+
+version: 0.17-0
+
+camera_groups:
+  Upstairs:
+    order: 1
+    icon: LuArrowBigUp
+    cameras:
+      - upstairs_hall
+      - stairs_top
+      - playroom
+  Exterior:
+    order: 2
+    icon: LuSprout
+    cameras:
+      - utilities_ptz
+      - rear_ptz
+      - pool_equipment
+      - ArmCrest
+      - ArmCrestASH41B
+      - back_yard
+      - front_door_aerial
+      - front_side_ptz
+      - doorbell_lite
+      - madrone_g6_entry
+      - madrone_g6_entry_package
+      - g5_bullet
+      - hot_tub
+  Downstairs:
+    order: 3
+    icon: LuArrowDownFromLine
+    cameras:
+      - garage_a
+      - garage_b
+      - family_room
+      - foyer_fisheye
+      - master_hallway
+      - staircase
+  Garages:
+    order: 4
+    icon: LuDoorOpen
+    cameras:
+      - garage_a
+      - garage_b
+  BirdsEye:
+    order: 5
+    icon: LuBird
+    cameras: birdseye
+  Reolink:
+    order: 6
+    icon: LuCamera
+    cameras:
+      - ReolinkStudyBPorchPTZ
+
+semantic_search:
+  enabled: true
+  model_size: large
+
+face_recognition:
+  enabled: true
+  model_size: large
+
+lpr:
+  enabled: true
+
+classification:
+  bird:
+    enabled: true
