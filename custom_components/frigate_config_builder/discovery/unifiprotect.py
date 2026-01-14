@@ -2,17 +2,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import TYPE_CHECKING
-from urllib.parse import quote
-
-import aiohttp
 
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .base import CameraAdapter, DiscoveredCamera
 
@@ -20,6 +15,9 @@ if TYPE_CHECKING:
     pass
 
 _LOGGER = logging.getLogger(__name__)
+
+# UniFi Protect integration domain key
+UNIFI_PROTECT_DOMAIN = "unifiprotect"
 
 
 class UniFiProtectAdapter(CameraAdapter):
@@ -31,14 +29,14 @@ class UniFiProtectAdapter(CameraAdapter):
     - camera.{name}_low_resolution_channel (detect quality)
     - camera.{name}_package_camera (for doorbell package detection)
 
-    This adapter discovers the high-res and low-res streams for each camera,
-    using expose-camera-stream-source to get the RTSP URLs.
+    This adapter discovers the high-res and low-res streams for each camera
+    by accessing the UniFi Protect integration's internal camera objects directly.
     """
 
     @property
     def integration_domain(self) -> str:
         """Return the HA integration domain."""
-        return "unifiprotect"
+        return UNIFI_PROTECT_DOMAIN
 
     async def discover_cameras(self) -> list[DiscoveredCamera]:
         """Discover all UniFi Protect cameras."""
@@ -103,7 +101,7 @@ class UniFiProtectAdapter(CameraAdapter):
 
         for entity in entity_reg.entities.values():
             # Skip non-cameras and non-unifiprotect
-            if entity.domain != "camera" or entity.platform != "unifiprotect":
+            if entity.domain != "camera" or entity.platform != UNIFI_PROTECT_DOMAIN:
                 continue
 
             # Skip disabled and insecure entities
@@ -154,8 +152,8 @@ class UniFiProtectAdapter(CameraAdapter):
             _LOGGER.debug("Camera %s has no high-res entity, skipping", cam_name)
             return None
 
-        # Get RTSP URLs using expose-camera-stream-source
-        record_url = await self._get_stream_url(high_entity.entity_id)
+        # Get RTSPS URLs from UniFi Protect integration data
+        record_url = await self._get_stream_url_from_protect(high_entity.entity_id)
         if not record_url:
             _LOGGER.warning("Could not get stream URL for %s", high_entity.entity_id)
             return None
@@ -163,7 +161,7 @@ class UniFiProtectAdapter(CameraAdapter):
         # Get low-res URL for detection (falls back to high-res)
         detect_url = record_url
         if low_entity:
-            low_url = await self._get_stream_url(low_entity.entity_id)
+            low_url = await self._get_stream_url_from_protect(low_entity.entity_id)
             if low_url:
                 detect_url = low_url
 
@@ -218,7 +216,7 @@ class UniFiProtectAdapter(CameraAdapter):
         area_reg: ar.AreaRegistry,
     ) -> DiscoveredCamera | None:
         """Create DiscoveredCamera for a package camera (e.g., G6 Doorbell)."""
-        stream_url = await self._get_stream_url(entity.entity_id)
+        stream_url = await self._get_stream_url_from_protect(entity.entity_id)
         if not stream_url:
             _LOGGER.warning("Could not get package stream URL for %s", entity.entity_id)
             return None
@@ -253,97 +251,99 @@ class UniFiProtectAdapter(CameraAdapter):
             available=available,
         )
 
-    async def _get_stream_url(self, entity_id: str) -> str | None:
-        """Get RTSP stream URL using expose-camera-stream-source API.
+    async def _get_stream_url_from_protect(self, entity_id: str) -> str | None:
+        """Get RTSPS stream URL directly from UniFi Protect integration.
 
-        The expose-camera-stream-source HACS integration creates an API endpoint
-        at /api/camera_stream_source/{entity_id} that returns the stream URL.
+        Accesses the UniFi Protect integration's internal camera objects to get
+        the RTSPS URL. This bypasses the need for expose-camera-stream-source.
         """
-        # Try to get the stream URL via HTTP API call
         try:
-            # FIXED: Use the proper import instead of self.hass.helpers
-            session = async_get_clientsession(self.hass)
+            # Access UniFi Protect integration data from hass.data
+            protect_data = self.hass.data.get(UNIFI_PROTECT_DOMAIN)
+            if not protect_data:
+                _LOGGER.debug("UniFi Protect integration data not found in hass.data")
+                return None
+
+            # UniFi Protect stores data per config entry
+            # Try to find the camera entity's platform
+            entity_reg = er.async_get(self.hass)
+            entity_entry = entity_reg.async_get(entity_id)
             
-            # For internal HA API calls in HA OS, use supervisor endpoint
-            supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+            if not entity_entry or not entity_entry.config_entry_id:
+                _LOGGER.debug("Entity %s not found in registry", entity_id)
+                return None
+
+            config_entry_id = entity_entry.config_entry_id
             
-            # URL-encode the entity_id to handle dots properly
-            encoded_entity_id = quote(entity_id, safe='')
+            # Get the config entry data for this UniFi Protect instance
+            entry_data = protect_data.get(config_entry_id)
+            if not entry_data:
+                _LOGGER.debug("No UniFi Protect data for config entry %s", config_entry_id)
+                return None
+
+            # The UniFi Protect integration stores a ProtectApiClient in entry_data
+            # Try to access it (structure may vary by version)
+            api_client = entry_data
             
-            if supervisor_token:
-                # Running in HA OS - use supervisor endpoint
-                url = f"http://supervisor/core/api/camera_stream_source/{encoded_entity_id}"
-                headers = {"Authorization": f"Bearer {supervisor_token}"}
-            else:
-                # Running in other modes - use external API
-                # Get a long-lived access token from hass.data if available
-                # This is a fallback and may not work in all setups
-                base_url = str(self.hass.config.api.base_url) if self.hass.config.api else "http://localhost:8123"
-                url = f"{base_url}/api/camera_stream_source/{encoded_entity_id}"
+            # Try different possible attribute names based on UniFi Protect integration structure
+            for attr in ["api", "protect", "data"]:
+                if hasattr(api_client, attr):
+                    api_client = getattr(api_client, attr)
+                    break
+            
+            # Get the camera object from the UniFi Protect API client
+            # Camera objects have RTSPS channel URLs
+            if hasattr(api_client, "bootstrap") and hasattr(api_client.bootstrap, "cameras"):
+                # Extract camera name from entity_id (e.g., back_yard from camera.back_yard_high_resolution_channel)
+                match = re.match(r"camera\.(.+?)_(high|medium|low)_resolution_channel", entity_id)
+                if not match:
+                    match = re.match(r"camera\.(.+?)_package_camera", entity_id)
                 
-                # Try to get access token from auth (may not work)
-                headers = {}
-                # Without a token, this will likely fail, but we have a fallback below
+                if not match:
+                    _LOGGER.debug("Could not parse camera name from entity_id: %s", entity_id)
+                    return None
+                
+                cam_name = match.group(1)
+                
+                # Find the camera object that matches this entity
+                for camera in api_client.bootstrap.cameras.values():
+                    # Camera has a 'name' attribute and 'channels' with RTSPS URLs
+                    camera_name_normalized = camera.name.lower().replace(" ", "_").replace("-", "_")
+                    
+                    if camera_name_normalized == cam_name:
+                        # Determine which channel we need
+                        channel_index = 0  # default to main/high channel
+                        
+                        if "high_resolution" in entity_id or "package_camera" in entity_id:
+                            channel_index = 0  # High res / package
+                        elif "medium_resolution" in entity_id:
+                            channel_index = 1  # Medium res
+                        elif "low_resolution" in entity_id:
+                            channel_index = 2  # Low res
+                        
+                        # Get the RTSPS URL from the channel
+                        if hasattr(camera, "channels") and len(camera.channels) > channel_index:
+                            channel = camera.channels[channel_index]
+                            
+                            # The channel has an rtsps_url attribute
+                            if hasattr(channel, "rtsps_url"):
+                                rtsps_url = channel.rtsps_url
+                                _LOGGER.debug("Found RTSPS URL for %s: %s", entity_id, rtsps_url[:50] + "...")
+                                return rtsps_url
+                        
+                        break
             
-            _LOGGER.debug("Attempting to get stream URL from: %s", url)
-            
-            try:
-                async with session.get(
-                    url, 
-                    headers=headers, 
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        stream_url = await response.text()
-                        # Remove quotes if present
-                        return stream_url.strip().strip('"')
-                    elif response.status == 404:
-                        _LOGGER.debug(
-                            "expose-camera-stream-source not installed or entity not found: %s",
-                            entity_id,
-                        )
-                    else:
-                        _LOGGER.debug(
-                            "API returned status %d for %s",
-                            response.status,
-                            entity_id,
-                        )
-            except aiohttp.ClientError as err:
-                _LOGGER.debug(
-                    "HTTP request failed for %s: %s",
-                    entity_id,
-                    err,
-                )
+            _LOGGER.debug("Could not find RTSPS URL in UniFi Protect data structure for %s", entity_id)
+            return None
 
         except Exception as err:
             _LOGGER.debug(
-                "expose-camera-stream-source API call failed for %s: %s",
+                "Failed to get stream URL from UniFi Protect data for %s: %s",
                 entity_id,
                 err,
+                exc_info=True,
             )
-
-        # Fallback: try getting stream URL from entity attributes
-        # This won't work for UniFi Protect but might for other cameras
-        try:
-            state = self.hass.states.get(entity_id)
-            if state and state.attributes:
-                # Some integrations expose stream_source in attributes
-                if "stream_source" in state.attributes:
-                    return state.attributes["stream_source"]
-                # Check for entity_picture with stream token
-                if "entity_picture" in state.attributes:
-                    # Some cameras expose the stream this way
-                    pass
-        except Exception as err:
-            _LOGGER.debug("Attribute fallback failed for %s: %s", entity_id, err)
-
-        # If we get here, expose-camera-stream-source is probably not installed
-        _LOGGER.warning(
-            "Could not get stream URL for %s. "
-            "Please install the 'expose-camera-stream-source' HACS integration.",
-            entity_id,
-        )
-        return None
+            return None
 
     def _format_rtsp_url(self, url: str) -> str:
         """Format RTSP URL for Frigate (add enableSrtp if needed)."""
