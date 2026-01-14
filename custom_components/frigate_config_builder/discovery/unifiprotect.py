@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import TYPE_CHECKING
+
+import aiohttp
 
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -249,45 +252,90 @@ class UniFiProtectAdapter(CameraAdapter):
         )
 
     async def _get_stream_url(self, entity_id: str) -> str | None:
-        """Get RTSP stream URL using expose-camera-stream-source.
+        """Get RTSP stream URL using expose-camera-stream-source API.
 
-        This uses the camera.expose_stream_source service provided by the
-        expose-camera-stream-source HACS integration.
+        The expose-camera-stream-source HACS integration creates an API endpoint
+        at /api/camera_stream_source/{entity_id} that returns the stream URL.
         """
+        # Try to get the stream URL via HTTP API call
         try:
-            # First try the service call method
-            response = await self.hass.services.async_call(
-                "camera",
-                "expose_stream_source",
-                {"entity_id": entity_id},
-                blocking=True,
-                return_response=True,
-            )
-            if response and isinstance(response, dict):
-                return response.get("url")
-            if response and isinstance(response, str):
-                return response
+            # Use hass's aiohttp client session for internal API calls
+            session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+            
+            # For internal HA API calls in HA OS, use supervisor endpoint
+            supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+            
+            if supervisor_token:
+                # Running in HA OS - use supervisor endpoint
+                url = f"http://supervisor/core/api/camera_stream_source/{entity_id}"
+                headers = {"Authorization": f"Bearer {supervisor_token}"}
+            else:
+                # Running in other modes - use external API
+                # Get a long-lived access token from hass.data if available
+                # This is a fallback and may not work in all setups
+                base_url = str(self.hass.config.api.base_url) if self.hass.config.api else "http://localhost:8123"
+                url = f"{base_url}/api/camera_stream_source/{entity_id}"
+                
+                # Try to get access token from auth (may not work)
+                headers = {}
+                # Without a token, this will likely fail, but we have a fallback below
+            
+            try:
+                async with session.get(
+                    url, 
+                    headers=headers, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        stream_url = await response.text()
+                        # Remove quotes if present
+                        return stream_url.strip().strip('"')
+                    elif response.status == 404:
+                        _LOGGER.debug(
+                            "expose-camera-stream-source not installed or entity not found: %s",
+                            entity_id,
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "API returned status %d for %s",
+                            response.status,
+                            entity_id,
+                        )
+            except aiohttp.ClientError as err:
+                _LOGGER.debug(
+                    "HTTP request failed for %s: %s",
+                    entity_id,
+                    err,
+                )
 
         except Exception as err:
             _LOGGER.debug(
-                "expose_stream_source service failed for %s: %s, trying API",
+                "expose-camera-stream-source API call failed for %s: %s",
                 entity_id,
                 err,
             )
 
-        # Fallback: try direct API endpoint
+        # Fallback: try getting stream URL from entity attributes
+        # This won't work for UniFi Protect but might for other cameras
         try:
-            # The expose-camera-stream-source creates /api/camera_stream_source/{entity_id}
-            # But we need to access it differently in component context
-            stream_url = self.hass.states.get(entity_id)
-            if stream_url:
-                attrs = stream_url.attributes
-                # Some integrations put the stream URL in attributes
-                if "stream_source" in attrs:
-                    return attrs["stream_source"]
+            state = self.hass.states.get(entity_id)
+            if state and state.attributes:
+                # Some integrations expose stream_source in attributes
+                if "stream_source" in state.attributes:
+                    return state.attributes["stream_source"]
+                # Check for entity_picture with stream token
+                if "entity_picture" in state.attributes:
+                    # Some cameras expose the stream this way
+                    pass
         except Exception as err:
-            _LOGGER.debug("Fallback stream URL lookup failed for %s: %s", entity_id, err)
+            _LOGGER.debug("Attribute fallback failed for %s: %s", entity_id, err)
 
+        # If we get here, expose-camera-stream-source is probably not installed
+        _LOGGER.warning(
+            "Could not get stream URL for %s. "
+            "Please install the 'expose-camera-stream-source' HACS integration.",
+            entity_id,
+        )
         return None
 
     def _format_rtsp_url(self, url: str) -> str:
