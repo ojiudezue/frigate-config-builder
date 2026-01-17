@@ -1,22 +1,20 @@
 """UniFi Protect camera discovery adapter.
 
-Version: 0.2.1.0
+Version: 0.2.2.0
 Date: 2026-01-17
 
 Changelog:
-- 0.2.1.0: FIXED - Use expose-camera-stream-source HTTP API endpoint instead of
-  trying to access internal UniFi Protect data structures. This matches the
-  approach that successfully worked in the standalone script.
+- 0.2.2.0: FIXED - Access camera entity's stream_source() method directly via
+  hass.data["camera"].get_entity(). No HTTP calls needed since we're running
+  inside Home Assistant. This is what expose-camera-stream-source does internally.
+- 0.2.1.0: Attempted HTTP API call (FAILED - 401 auth, SUPERVISOR_TOKEN not available to integrations)
 - 0.2.0.0: Attempted direct UniFi Protect data access (FAILED - internal structures vary)
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
-from typing import TYPE_CHECKING
-
-import aiohttp
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
@@ -31,6 +29,9 @@ _LOGGER = logging.getLogger(__name__)
 # UniFi Protect integration domain key
 UNIFI_PROTECT_DOMAIN = "unifiprotect"
 
+# Camera domain for accessing camera entities
+CAMERA_DOMAIN = "camera"
+
 
 class UniFiProtectAdapter(CameraAdapter):
     """Discover cameras from UniFi Protect integration.
@@ -41,9 +42,9 @@ class UniFiProtectAdapter(CameraAdapter):
     - camera.{name}_low_resolution_channel (detect quality)
     - camera.{name}_package_camera (for doorbell package detection)
 
-    This adapter uses the expose-camera-stream-source HACS integration
-    to retrieve RTSP URLs via its HTTP API endpoint at:
-    /api/camera_stream_source/{entity_id}
+    This adapter retrieves RTSP URLs by directly accessing the camera entity's
+    stream_source() method via hass.data["camera"].get_entity(). This is the
+    same approach that expose-camera-stream-source uses internally.
     """
 
     @property
@@ -60,6 +61,15 @@ class UniFiProtectAdapter(CameraAdapter):
         cameras: list[DiscoveredCamera] = []
         entity_reg = er.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
+
+        # Verify camera component is available
+        camera_component = self.hass.data.get(CAMERA_DOMAIN)
+        if camera_component is None:
+            _LOGGER.error(
+                "Camera component not found in hass.data. "
+                "This should not happen - camera domain should be loaded."
+            )
+            return []
 
         # Group entities by camera device
         camera_groups = self._group_camera_entities(entity_reg)
@@ -168,7 +178,7 @@ class UniFiProtectAdapter(CameraAdapter):
             _LOGGER.debug("Camera %s has no high-res entity, skipping", cam_name)
             return None
 
-        # Get RTSPS URLs using expose-camera-stream-source HTTP API
+        # Get RTSPS URLs by directly accessing camera entity
         record_url = await self._get_stream_url(high_entity.entity_id)
         if not record_url:
             _LOGGER.warning("Could not get stream URL for %s", high_entity.entity_id)
@@ -270,98 +280,74 @@ class UniFiProtectAdapter(CameraAdapter):
         )
 
     async def _get_stream_url(self, entity_id: str) -> str | None:
-        """Get RTSP stream URL using expose-camera-stream-source HTTP API.
+        """Get RTSP stream URL by directly accessing the camera entity.
         
-        This calls the HTTP endpoint provided by the expose-camera-stream-source
-        HACS integration: /api/camera_stream_source/{entity_id}
-        
-        This is the same approach that worked successfully in the standalone script.
+        This accesses the camera entity's stream_source() method directly via
+        hass.data["camera"].get_entity(). This is what the expose-camera-stream-source
+        integration does internally - no HTTP calls or authentication needed since
+        we're running inside Home Assistant.
         """
         try:
-            # Determine the base URL and auth token based on environment
-            # Priority: SUPERVISOR_TOKEN (HA OS) > internal HA API
+            # Access the camera entity component from hass.data
+            camera_component = self.hass.data.get(CAMERA_DOMAIN)
+            if camera_component is None:
+                _LOGGER.debug("Camera component not found in hass.data")
+                return None
             
-            supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+            # The camera component is an EntityComponent - get the specific entity
+            # EntityComponent.get_entity() returns the actual entity object
+            camera_entity = camera_component.get_entity(entity_id)
+            if camera_entity is None:
+                _LOGGER.debug(
+                    "Camera entity %s not found in camera component. "
+                    "Entity may be disabled or not yet loaded.",
+                    entity_id
+                )
+                return None
             
-            if supervisor_token:
-                # Running on HA OS - use Supervisor API proxy
-                base_url = "http://supervisor/core"
-                headers = {
-                    "Authorization": f"Bearer {supervisor_token}",
-                    "Content-Type": "application/json",
-                }
-                _LOGGER.debug("Using Supervisor API for %s", entity_id)
+            # Call the stream_source() method to get the RTSP URL
+            # This is an async method on CameraEntity that returns the stream URL
+            if hasattr(camera_entity, 'stream_source'):
+                try:
+                    stream_url = await camera_entity.stream_source()
+                except Exception as source_err:
+                    _LOGGER.debug(
+                        "stream_source() raised exception for %s: %s",
+                        entity_id,
+                        source_err
+                    )
+                    return None
+                
+                if stream_url:
+                    _LOGGER.debug(
+                        "Got stream URL for %s via direct entity access: %s...",
+                        entity_id,
+                        stream_url[:60] if len(stream_url) > 60 else stream_url
+                    )
+                    return stream_url
+                else:
+                    _LOGGER.debug(
+                        "stream_source() returned None/empty for %s. "
+                        "Camera may not support streaming or RTSP may be disabled.",
+                        entity_id
+                    )
+                    return None
             else:
-                # Not on HA OS - try to use internal HA API
-                # Get the internal URL from HA config
-                internal_url = None
-                
-                # Try different ways to get the HA URL
-                if hasattr(self.hass, 'config') and hasattr(self.hass.config, 'internal_url'):
-                    internal_url = self.hass.config.internal_url
-                elif hasattr(self.hass, 'config') and hasattr(self.hass.config, 'api'):
-                    if hasattr(self.hass.config.api, 'base_url'):
-                        internal_url = self.hass.config.api.base_url
-                
-                if not internal_url:
-                    # Fallback to localhost
-                    internal_url = "http://localhost:8123"
-                
-                base_url = internal_url.rstrip("/")
-                
-                # For internal calls, we need a long-lived access token
-                # This should be configured or we use the HA context
-                # For now, try without auth (may work for local calls)
-                headers = {"Content-Type": "application/json"}
-                _LOGGER.debug("Using internal HA API at %s for %s", base_url, entity_id)
-
-            # Build the API URL
-            # The expose-camera-stream-source creates: /api/camera_stream_source/{entity_id}
-            api_url = f"{base_url}/api/camera_stream_source/{entity_id}"
+                _LOGGER.debug(
+                    "Camera entity %s does not have stream_source method. "
+                    "Entity type: %s",
+                    entity_id,
+                    type(camera_entity).__name__
+                )
+                return None
             
-            _LOGGER.debug("Calling expose-camera-stream-source API: %s", api_url)
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    if response.status == 200:
-                        # The API returns the stream URL as plain text
-                        stream_url = await response.text()
-                        stream_url = stream_url.strip().strip('"')  # Remove any quotes/whitespace
-                        
-                        if stream_url and ("rtsp" in stream_url or "rtsps" in stream_url):
-                            _LOGGER.debug("Got stream URL for %s: %s...", entity_id, stream_url[:50])
-                            return stream_url
-                        else:
-                            _LOGGER.warning("Unexpected response format from API for %s: %s", entity_id, stream_url[:100] if stream_url else "empty")
-                            return None
-                    elif response.status == 404:
-                        _LOGGER.warning(
-                            "expose-camera-stream-source API not found for %s (404). "
-                            "Is the expose-camera-stream-source integration installed and enabled?",
-                            entity_id
-                        )
-                        return None
-                    elif response.status == 401:
-                        _LOGGER.warning(
-                            "Authentication failed for expose-camera-stream-source API (401). "
-                            "Check SUPERVISOR_TOKEN or API access."
-                        )
-                        return None
-                    else:
-                        body = await response.text()
-                        _LOGGER.warning(
-                            "Failed to get stream URL for %s: HTTP %d - %s",
-                            entity_id,
-                            response.status,
-                            body[:200] if body else "no body"
-                        )
-                        return None
-                        
-        except aiohttp.ClientError as err:
-            _LOGGER.warning("HTTP error getting stream URL for %s: %s", entity_id, err)
-            return None
         except Exception as err:
-            _LOGGER.warning("Error getting stream URL for %s: %s", entity_id, err, exc_info=True)
+            _LOGGER.warning(
+                "Error getting stream URL for %s: %s",
+                entity_id,
+                err,
+                exc_info=True
+            )
             return None
 
     def _format_rtsp_url(self, url: str) -> str:

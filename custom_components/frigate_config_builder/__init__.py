@@ -1,7 +1,12 @@
 """Frigate Config Builder integration for Home Assistant.
 
+Version: 0.3.0.0
+Date: 2026-01-17
+
 This integration auto-discovers cameras from various HA integrations
 and generates complete Frigate NVR configuration files.
+
+Milestone 3: Added button, sensor, and binary_sensor entities.
 """
 from __future__ import annotations
 
@@ -20,11 +25,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Platforms to set up - will be expanded in Milestone 3
+# Platforms to set up
 PLATFORMS: list[Platform] = [
-    # Platform.BUTTON,
-    # Platform.SENSOR,
-    # Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
 ]
 
 
@@ -46,9 +51,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store coordinator
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Set up platforms (M3: will add entities)
-    if PLATFORMS:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Set up platforms
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services
     await _async_register_services(hass)
@@ -56,7 +60,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
-    _LOGGER.info("Frigate Config Builder integration set up successfully")
+    # Fire discovery complete event
+    hass.bus.async_fire(
+        f"{DOMAIN}_discovery_complete",
+        {
+            "camera_count": coordinator.cameras_discovered_count,
+            "new_cameras": [c.name for c in coordinator.discovered_cameras if c.is_new],
+        },
+    )
+
+    _LOGGER.info(
+        "Frigate Config Builder set up successfully with %d cameras discovered",
+        coordinator.cameras_discovered_count,
+    )
     return True
 
 
@@ -65,9 +81,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Unloading Frigate Config Builder entry: %s", entry.entry_id)
 
     # Unload platforms
-    unload_ok = True
-    if PLATFORMS:
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
@@ -102,6 +116,17 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
         try:
             await coordinator.async_generate_config(push=push)
+
+            # Fire event for automations
+            hass.bus.async_fire(
+                f"{DOMAIN}_config_generated",
+                {
+                    "camera_count": coordinator.cameras_selected_count,
+                    "output_path": entries[0].data.get("output_path"),
+                    "pushed": push,
+                },
+            )
+
         except Exception as err:
             _LOGGER.error("Failed to generate Frigate config: %s", err)
             raise
@@ -117,6 +142,18 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
         try:
             await coordinator.async_refresh()
+
+            # Fire event for automations
+            hass.bus.async_fire(
+                f"{DOMAIN}_cameras_refreshed",
+                {
+                    "camera_count": coordinator.cameras_discovered_count,
+                    "new_cameras": [
+                        c.name for c in coordinator.discovered_cameras if c.is_new
+                    ],
+                },
+            )
+
         except Exception as err:
             _LOGGER.error("Failed to refresh cameras: %s", err)
             raise

@@ -98,20 +98,21 @@
       "required": "This field is required"
     },
     "abort": {
-      "already_configured": "Frigate Config Builder is already configured"
+      "already_configured": "Frigate Config Builder is already configured",
+      "coordinator_not_found": "Integration not fully loaded. Please reload and try again."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Camera Selection",
-        "description": "Configure camera selection and grouping.\n\nDiscovered cameras: {camera_count}",
+        "description": "Select which cameras to include in your Frigate configuration.\n\nDiscovered **{camera_count}** cameras ({source_summary})\n\nCameras marked [NEW] were discovered since last config generation.\nCameras marked [UNAVAIL] are currently offline.",
         "data": {
           "selected_cameras": "Cameras to Include",
           "auto_groups_from_areas": "Auto-generate groups from HA Areas"
         },
         "data_description": {
-          "selected_cameras": "Select which cameras to include in the Frigate configuration",
+          "selected_cameras": "Check the cameras you want in your Frigate configuration",
           "auto_groups_from_areas": "Automatically create camera groups based on Home Assistant areas"
         }
       }

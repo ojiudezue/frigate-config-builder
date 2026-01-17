@@ -1,4 +1,10 @@
-"""Config flow for Frigate Config Builder."""
+"""Config flow for Frigate Config Builder.
+
+Version: 0.3.0.0
+Date: 2026-01-17
+
+Milestone 3: Full options flow with camera selection checkboxes.
+"""
 from __future__ import annotations
 
 import logging
@@ -9,6 +15,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -25,6 +32,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     BIRDSEYE_MODES,
     CONF_AUDIO_DETECTION,
+    CONF_AUTO_GROUPS,
     CONF_AUTO_PUSH,
     CONF_BIRD_CLASSIFICATION,
     CONF_BIRDSEYE_ENABLED,
@@ -47,6 +55,7 @@ from .const import (
     CONF_RETAIN_DETECTIONS,
     CONF_RETAIN_MOTION,
     CONF_RETAIN_SNAPSHOTS,
+    CONF_SELECTED_CAMERAS,
     CONF_SEMANTIC_SEARCH,
     CONF_SEMANTIC_SEARCH_MODEL,
     DEFAULT_BIRDSEYE_MODE,
@@ -366,37 +375,81 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Get the options flow for this handler."""
-        return FrigateConfigBuilderOptionsFlow()
+        return FrigateConfigBuilderOptionsFlow(config_entry)
 
 
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
     """Handle options flow for camera selection."""
 
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle options flow.
-
-        For Milestone 1, this is a placeholder.
-        Camera selection will be implemented in Milestone 3.
-        """
+        """Handle main options flow - camera selection."""
         if user_input is not None:
+            # Save the options
             return self.async_create_entry(title="", data=user_input)
 
-        # Get current options (self.config_entry is provided by OptionsFlow base class)
-        auto_groups = self.config_entry.options.get("auto_groups_from_areas", True)
+        # Get coordinator to access discovered cameras
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        
+        if coordinator is None:
+            _LOGGER.error("Coordinator not found for options flow")
+            return self.async_abort(reason="coordinator_not_found")
+
+        cameras = coordinator.discovered_cameras
+
+        # Build camera selection options with badges
+        camera_options: dict[str, str] = {}
+        for cam in cameras:
+            label = f"{cam.friendly_name} ({cam.source})"
+            
+            # Add badges
+            badges = []
+            if cam.is_new:
+                badges.append("NEW")
+            if not cam.available:
+                badges.append("UNAVAIL")
+            
+            if badges:
+                label = f"{label} [{', '.join(badges)}]"
+            
+            camera_options[cam.id] = label
+
+        # Get currently selected cameras (default to all if not set)
+        current_selected = self._config_entry.options.get(
+            CONF_SELECTED_CAMERAS,
+            list(camera_options.keys()),  # Default: all cameras selected
+        )
+
+        # Get current auto_groups setting
+        auto_groups = self._config_entry.options.get(CONF_AUTO_GROUPS, True)
+
+        # Build grouped display for description
+        by_source = coordinator.get_cameras_by_source()
+        source_summary = ", ".join(
+            f"{source}: {len(cams)}" for source, cams in by_source.items()
+        )
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_SELECTED_CAMERAS,
+                        default=current_selected,
+                    ): cv.multi_select(camera_options),
                     vol.Optional(
-                        "auto_groups_from_areas",
+                        CONF_AUTO_GROUPS,
                         default=auto_groups,
                     ): BooleanSelector(),
                 }
             ),
             description_placeholders={
-                "camera_count": "0 (discovery not yet implemented)",
+                "camera_count": str(len(cameras)),
+                "source_summary": source_summary,
             },
         )
