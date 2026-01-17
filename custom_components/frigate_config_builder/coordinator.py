@@ -1,4 +1,8 @@
-"""Data coordinator for Frigate Config Builder."""
+"""Data coordinator for Frigate Config Builder.
+
+Version: 0.3.0.2
+Date: 2026-01-17
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -7,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import CONF_SELECTED_CAMERAS, DOMAIN
+from .const import CONF_EXCLUDE_UNAVAILABLE, CONF_SELECTED_CAMERAS, DOMAIN
 from .discovery import DiscoveryCoordinator
 from .generator import FrigateConfigGenerator
 from .output import push_to_frigate, write_config_file
@@ -89,18 +93,29 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         start = time.monotonic()
 
-        # Get selected cameras (default to all if none selected)
+        # Get selected cameras (default to all available if none selected)
         selected_ids = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
-        
+        exclude_unavailable = self.entry.options.get(CONF_EXCLUDE_UNAVAILABLE, True)
+
         if selected_ids:
             cameras = [c for c in self.discovered_cameras if c.id in selected_ids]
         else:
-            # If no selection made yet, use all discovered cameras
+            # If no selection made yet, use all cameras
             cameras = self.discovered_cameras
             _LOGGER.info(
                 "No cameras explicitly selected, using all %d discovered cameras",
                 len(cameras),
             )
+
+        # Apply exclude_unavailable filter
+        if exclude_unavailable:
+            original_count = len(cameras)
+            cameras = [c for c in cameras if c.available]
+            if original_count != len(cameras):
+                _LOGGER.info(
+                    "Excluded %d unavailable cameras from generation",
+                    original_count - len(cameras),
+                )
 
         # Generate config
         config_yaml = await self.generator.generate(cameras)
@@ -129,11 +144,20 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def selected_cameras(self) -> list[DiscoveredCamera]:
-        """Return only selected cameras."""
+        """Return only selected cameras (respecting exclude_unavailable)."""
         selected_ids = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
+        exclude_unavailable = self.entry.options.get(CONF_EXCLUDE_UNAVAILABLE, True)
+
         if selected_ids:
-            return [c for c in self.discovered_cameras if c.id in selected_ids]
-        return self.discovered_cameras
+            cameras = [c for c in self.discovered_cameras if c.id in selected_ids]
+        else:
+            cameras = self.discovered_cameras
+
+        # Apply exclude_unavailable filter
+        if exclude_unavailable:
+            cameras = [c for c in cameras if c.available]
+
+        return cameras
 
     @property
     def cameras_selected_count(self) -> int:

@@ -1,6 +1,6 @@
 """Button entity for Frigate Config Builder.
 
-Version: 0.3.0.0
+Version: 0.3.0.2
 Date: 2026-01-17
 
 Provides:
@@ -78,7 +78,7 @@ class FrigateConfigBuilderGenerateButton(
             name="Frigate Config Builder",
             manufacturer="Community",
             model="Config Builder",
-            sw_version="0.3.0.0",
+            sw_version="0.3.0.2",
         )
 
     async def async_press(self) -> None:

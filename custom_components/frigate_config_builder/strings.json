@@ -2,22 +2,22 @@
   "config": {
     "step": {
       "user": {
-        "title": "Frigate Config Builder",
-        "description": "Configure where to save the generated Frigate configuration.",
+        "title": "Connection Settings",
+        "description": "Configure where to save the generated Frigate config and optional Frigate API connection.",
         "data": {
           "output_path": "Output Path",
-          "frigate_url": "Frigate URL",
+          "frigate_url": "Frigate URL (optional)",
           "auto_push": "Auto-push config to Frigate"
         },
         "data_description": {
-          "output_path": "Path to save the generated frigate.yml file (e.g., /config/www/frigate.yml)",
-          "frigate_url": "Frigate API URL for pushing config (e.g., http://192.168.1.100:5000). Leave empty to only save locally.",
-          "auto_push": "Automatically push config and restart Frigate after generation"
+          "output_path": "Path to save the generated frigate.yml file",
+          "frigate_url": "URL to Frigate instance for API push (e.g., http://frigate:5000)",
+          "auto_push": "Automatically push config to Frigate after generation"
         }
       },
       "hardware": {
-        "title": "Hardware Configuration",
-        "description": "Configure your object detector and hardware acceleration settings.",
+        "title": "Hardware Settings",
+        "description": "Configure your Frigate hardware acceleration and detector settings.",
         "data": {
           "detector_type": "Detector Type",
           "detector_device": "Detector Device",
@@ -25,15 +25,15 @@
           "network_interfaces": "Network Interfaces"
         },
         "data_description": {
-          "detector_type": "Type of object detector (edgetpu for Coral, cpu for software)",
-          "detector_device": "Detector device path (usb, pci, or /dev/bus/usb/...)",
+          "detector_type": "Type of object detection hardware",
+          "detector_device": "Device path or identifier for detector",
           "hwaccel": "Hardware acceleration for video decoding",
-          "network_interfaces": "Network interfaces for Frigate telemetry (comma-separated)"
+          "network_interfaces": "Network interfaces for RTSP (comma-separated)"
         }
       },
       "mqtt": {
-        "title": "MQTT Configuration",
-        "description": "Configure MQTT broker connection.\n\nHome Assistant MQTT detected: **{mqtt_detected}**",
+        "title": "MQTT Settings",
+        "description": "Configure MQTT connection for Frigate. MQTT detected: {mqtt_detected}",
         "data": {
           "mqtt_auto": "Use Home Assistant MQTT",
           "mqtt_host": "MQTT Host",
@@ -42,80 +42,67 @@
           "mqtt_password": "MQTT Password"
         },
         "data_description": {
-          "mqtt_auto": "Automatically use MQTT settings from Home Assistant",
-          "mqtt_host": "MQTT broker hostname or IP (required if not using auto)",
+          "mqtt_auto": "Use the same MQTT broker as Home Assistant",
+          "mqtt_host": "MQTT broker hostname or IP (if not using HA MQTT)",
           "mqtt_port": "MQTT broker port",
-          "mqtt_user": "MQTT username (optional)",
-          "mqtt_password": "MQTT password (optional)"
+          "mqtt_user": "MQTT username (if required)",
+          "mqtt_password": "MQTT password (if required)"
         }
       },
       "features": {
-        "title": "Feature Configuration",
-        "description": "Enable Frigate features. These require additional hardware resources.",
+        "title": "Feature Settings",
+        "description": "Enable optional Frigate features.",
         "data": {
           "audio_detection": "Audio Detection",
           "face_recognition": "Face Recognition",
-          "face_recognition_model": "Face Recognition Model",
+          "face_recognition_model": "Face Recognition Model Size",
           "semantic_search": "Semantic Search",
-          "semantic_search_model": "Semantic Search Model",
+          "semantic_search_model": "Semantic Search Model Size",
           "lpr": "License Plate Recognition",
           "bird_classification": "Bird Classification",
-          "birdseye_enabled": "BirdsEye View",
-          "birdseye_mode": "BirdsEye Mode"
-        },
-        "data_description": {
-          "audio_detection": "Detect audio events like barks, screams, and alarms",
-          "face_recognition": "Enable face recognition (requires significant CPU/GPU)",
-          "face_recognition_model": "Model size for face recognition",
-          "semantic_search": "Enable semantic/natural language search",
-          "semantic_search_model": "Model size for semantic search",
-          "lpr": "Enable license plate recognition",
-          "bird_classification": "Classify detected birds by species",
-          "birdseye_enabled": "Enable BirdsEye multi-camera view",
-          "birdseye_mode": "When to show cameras in BirdsEye view"
+          "birdseye_enabled": "Birdseye View",
+          "birdseye_mode": "Birdseye Mode"
         }
       },
       "retention": {
         "title": "Retention Settings",
-        "description": "Configure how long to keep recordings and snapshots.",
+        "description": "Configure how long Frigate keeps recordings and snapshots.",
         "data": {
-          "retain_alerts": "Alert Retention",
-          "retain_detections": "Detection Retention",
-          "retain_motion": "Motion Retention",
-          "retain_snapshots": "Snapshot Retention"
-        },
-        "data_description": {
-          "retain_alerts": "Days to keep recordings containing alerts",
-          "retain_detections": "Days to keep recordings containing detections",
-          "retain_motion": "Days to keep recordings containing motion",
-          "retain_snapshots": "Days to keep snapshot images"
+          "retain_alerts": "Alert Retention (days)",
+          "retain_detections": "Detection Retention (days)",
+          "retain_motion": "Motion Retention (days)",
+          "retain_snapshots": "Snapshot Retention (days)"
         }
       }
     },
     "error": {
-      "invalid_path": "Invalid output path. Must end with .yml",
-      "invalid_url": "Invalid URL format. Must start with http:// or https://",
+      "invalid_path": "Output path must end with .yml",
+      "invalid_url": "Invalid URL format",
       "required": "This field is required"
     },
     "abort": {
-      "already_configured": "Frigate Config Builder is already configured",
-      "coordinator_not_found": "Integration not fully loaded. Please reload and try again."
+      "already_configured": "Frigate Config Builder is already configured"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Camera Selection",
-        "description": "Select which cameras to include in your Frigate configuration.\n\nDiscovered **{camera_count}** cameras ({source_summary})\n\nCameras marked [NEW] were discovered since last config generation.\nCameras marked [UNAVAIL] are currently offline.",
+        "description": "Discovered {camera_count} cameras ({source_summary}).\n\n{available_count} available, {unavailable_count} unavailable.\n\nUnavailable: {unavailable_cameras}",
         "data": {
-          "selected_cameras": "Cameras to Include",
-          "auto_groups_from_areas": "Auto-generate groups from HA Areas"
+          "exclude_unavailable": "Exclude unavailable cameras",
+          "selected_cameras": "Select cameras to include",
+          "auto_groups_from_areas": "Auto-create groups from HA areas"
         },
         "data_description": {
-          "selected_cameras": "Check the cameras you want in your Frigate configuration",
-          "auto_groups_from_areas": "Automatically create camera groups based on Home Assistant areas"
+          "exclude_unavailable": "Hide cameras that are currently offline or unavailable from selection",
+          "selected_cameras": "Choose which discovered cameras to include in the Frigate config",
+          "auto_groups_from_areas": "Automatically group cameras based on their assigned Home Assistant areas"
         }
       }
+    },
+    "abort": {
+      "coordinator_not_found": "Integration not fully loaded. Please wait and try again."
     }
   },
   "entity": {
@@ -142,19 +129,13 @@
     }
   },
   "services": {
-    "generate": {
-      "name": "Generate Frigate Config",
-      "description": "Generate the Frigate configuration file from discovered cameras.",
-      "fields": {
-        "push": {
-          "name": "Push to Frigate",
-          "description": "Push the configuration to Frigate API and restart."
-        }
-      }
+    "generate_config": {
+      "name": "Generate Config",
+      "description": "Generate Frigate configuration file from discovered cameras."
     },
     "refresh_cameras": {
       "name": "Refresh Cameras",
-      "description": "Re-run camera discovery to find new or changed cameras."
+      "description": "Refresh the list of discovered cameras from all integrations."
     }
   }
 }

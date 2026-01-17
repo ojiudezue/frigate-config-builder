@@ -1,9 +1,12 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.3.0.0
+Version: 0.3.0.2
 Date: 2026-01-17
 
-Milestone 3: Full options flow with camera selection checkboxes.
+Features:
+- Multi-step initial setup (connection, hardware, mqtt, features, retention)
+- Options flow with camera selection and exclude unavailable toggle
+- Comma-separated list of unavailable cameras with overflow handling
 """
 from __future__ import annotations
 
@@ -39,6 +42,7 @@ from .const import (
     CONF_BIRDSEYE_MODE,
     CONF_DETECTOR_DEVICE,
     CONF_DETECTOR_TYPE,
+    CONF_EXCLUDE_UNAVAILABLE,
     CONF_FACE_RECOGNITION,
     CONF_FACE_RECOGNITION_MODEL,
     CONF_FRIGATE_URL,
@@ -77,6 +81,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Maximum cameras to show in the unavailable list before truncating
+MAX_UNAVAILABLE_DISPLAY = 5
 
 
 class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -378,6 +385,36 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
         return FrigateConfigBuilderOptionsFlow(config_entry)
 
 
+def _format_unavailable_cameras_list(
+    unavailable_cameras: list[str],
+    max_display: int = MAX_UNAVAILABLE_DISPLAY,
+) -> str:
+    """Format the list of unavailable cameras with overflow handling.
+
+    Args:
+        unavailable_cameras: List of unavailable camera friendly names
+        max_display: Maximum cameras to display before truncating
+
+    Returns:
+        User-friendly formatted string like:
+        - "Camera A, Camera B" (if 2 cameras)
+        - "Camera A, Camera B, Camera C, +2 more" (if 5 cameras with max_display=3)
+        - "None" (if empty)
+    """
+    if not unavailable_cameras:
+        return "None"
+
+    count = len(unavailable_cameras)
+
+    if count <= max_display:
+        return ", ".join(unavailable_cameras)
+
+    # Show first (max_display - 1) cameras + "and X more"
+    displayed = unavailable_cameras[: max_display]
+    remaining = count - max_display
+    return f"{', '.join(displayed)}, +{remaining} more"
+
+
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
     """Handle options flow for camera selection."""
 
@@ -389,67 +426,129 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle main options flow - camera selection."""
-        if user_input is not None:
-            # Save the options
-            return self.async_create_entry(title="", data=user_input)
-
         # Get coordinator to access discovered cameras
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
-        
+
         if coordinator is None:
             _LOGGER.error("Coordinator not found for options flow")
             return self.async_abort(reason="coordinator_not_found")
 
-        cameras = coordinator.discovered_cameras
+        all_cameras = coordinator.discovered_cameras
 
-        # Build camera selection options with badges
+        # Separate available and unavailable cameras
+        available_cameras = [cam for cam in all_cameras if cam.available]
+        unavailable_cameras = [cam for cam in all_cameras if not cam.available]
+        unavailable_names = [cam.friendly_name for cam in unavailable_cameras]
+
+        # Get current options
+        current_exclude_unavailable = self._config_entry.options.get(
+            CONF_EXCLUDE_UNAVAILABLE, True  # Default: exclude unavailable
+        )
+        current_auto_groups = self._config_entry.options.get(CONF_AUTO_GROUPS, True)
+
+        if user_input is not None:
+            # Process submission
+            exclude_unavailable = user_input.get(CONF_EXCLUDE_UNAVAILABLE, True)
+            selected_ids = user_input.get(CONF_SELECTED_CAMERAS, [])
+
+            # If exclude_unavailable is True, ensure no unavailable cameras in selection
+            if exclude_unavailable:
+                unavailable_ids = {cam.id for cam in unavailable_cameras}
+                selected_ids = [
+                    cam_id for cam_id in selected_ids if cam_id not in unavailable_ids
+                ]
+
+            # Build final options
+            options = {
+                CONF_SELECTED_CAMERAS: selected_ids,
+                CONF_EXCLUDE_UNAVAILABLE: exclude_unavailable,
+                CONF_AUTO_GROUPS: user_input.get(CONF_AUTO_GROUPS, True),
+            }
+
+            return self.async_create_entry(title="", data=options)
+
+        # Build camera selection options based on exclude setting
+        # When showing the form, we show all cameras but mark unavailable ones
         camera_options: dict[str, str] = {}
-        for cam in cameras:
+
+        # Determine which cameras to show in selection
+        if current_exclude_unavailable:
+            # Only show available cameras
+            cameras_to_show = available_cameras
+        else:
+            # Show all cameras
+            cameras_to_show = all_cameras
+
+        for cam in cameras_to_show:
             label = f"{cam.friendly_name} ({cam.source})"
-            
-            # Add badges
+
+            # Add badges for status
             badges = []
             if cam.is_new:
                 badges.append("NEW")
             if not cam.available:
                 badges.append("UNAVAIL")
-            
+
             if badges:
                 label = f"{label} [{', '.join(badges)}]"
-            
+
             camera_options[cam.id] = label
 
-        # Get currently selected cameras (default to all if not set)
-        current_selected = self._config_entry.options.get(
-            CONF_SELECTED_CAMERAS,
-            list(camera_options.keys()),  # Default: all cameras selected
-        )
+        # Get currently selected cameras
+        # Default: all available cameras if no selection exists
+        current_selected = self._config_entry.options.get(CONF_SELECTED_CAMERAS)
 
-        # Get current auto_groups setting
-        auto_groups = self._config_entry.options.get(CONF_AUTO_GROUPS, True)
+        if current_selected is None:
+            # First time - default to all available cameras
+            default_selected = [cam.id for cam in available_cameras]
+        else:
+            # Filter current selection based on exclude setting
+            if current_exclude_unavailable:
+                unavailable_ids = {cam.id for cam in unavailable_cameras}
+                default_selected = [
+                    cam_id
+                    for cam_id in current_selected
+                    if cam_id not in unavailable_ids and cam_id in camera_options
+                ]
+            else:
+                # Keep all that still exist
+                all_ids = {cam.id for cam in all_cameras}
+                default_selected = [
+                    cam_id for cam_id in current_selected if cam_id in all_ids
+                ]
 
-        # Build grouped display for description
+        # Build description placeholders
         by_source = coordinator.get_cameras_by_source()
         source_summary = ", ".join(
             f"{source}: {len(cams)}" for source, cams in by_source.items()
         )
 
+        # Format unavailable cameras list for display
+        unavailable_list = _format_unavailable_cameras_list(unavailable_names)
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_EXCLUDE_UNAVAILABLE,
+                        default=current_exclude_unavailable,
+                    ): BooleanSelector(),
                     vol.Required(
                         CONF_SELECTED_CAMERAS,
-                        default=current_selected,
+                        default=default_selected,
                     ): cv.multi_select(camera_options),
                     vol.Optional(
                         CONF_AUTO_GROUPS,
-                        default=auto_groups,
+                        default=current_auto_groups,
                     ): BooleanSelector(),
                 }
             ),
             description_placeholders={
-                "camera_count": str(len(cameras)),
+                "camera_count": str(len(all_cameras)),
+                "available_count": str(len(available_cameras)),
+                "unavailable_count": str(len(unavailable_cameras)),
                 "source_summary": source_summary,
+                "unavailable_cameras": unavailable_list,
             },
         )

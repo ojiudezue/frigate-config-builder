@@ -47,6 +47,7 @@ CONF_RETAIN_SNAPSHOTS: Final = "retain_snapshots"
 
 # Camera Selection (Options)
 CONF_SELECTED_CAMERAS: Final = "selected_cameras"
+CONF_EXCLUDE_UNAVAILABLE: Final = "exclude_unavailable"
 CONF_AUTO_GROUPS: Final = "auto_groups_from_areas"
 CONF_MANUAL_GROUPS: Final = "manual_groups"
 CONF_MANUAL_CAMERAS: Final = "manual_cameras"
