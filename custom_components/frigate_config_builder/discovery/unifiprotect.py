@@ -1,4 +1,14 @@
-"""UniFi Protect camera discovery adapter."""
+"""UniFi Protect camera discovery adapter.
+
+Version: 0.2.0.0
+Date: 2026-01-14
+
+Changelog:
+- 0.2.0.0: Fixed UniFi Protect discovery by accessing integration data directly
+  instead of relying on expose-camera-stream-source (which doesn't work with
+  UniFi Protect cameras). Now extracts RTSPS URLs from UniFi Protect's internal
+  camera objects.
+"""
 from __future__ import annotations
 
 import logging
