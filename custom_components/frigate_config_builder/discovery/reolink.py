@@ -1,6 +1,6 @@
 """Reolink camera discovery adapter.
 
-Version: 0.4.0.0
+Version: 0.4.0.2
 Date: 2026-01-17
 
 Discovers cameras from the native Reolink integration.

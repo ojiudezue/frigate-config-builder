@@ -1,12 +1,12 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.1
+Version: 0.4.0.2
 Date: 2026-01-17
 
-Features:
-- Multi-step initial setup (connection, hardware, mqtt, features, retention)
-- Options flow with camera selection and filtering options
-- Select all toggle for convenience
+Changelog:
+- 0.4.0.2: Options flow now runs fresh discovery when opened (fixes Reolink delay)
+- 0.4.0.1: Bug fixes
+- 0.4.0.0: Multi-step initial setup with options flow camera selection
 """
 from __future__ import annotations
 
@@ -79,6 +79,7 @@ from .const import (
     HWACCEL_OPTIONS,
     MODEL_SIZES,
 )
+from .discovery import DiscoveredCamera
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -368,7 +369,7 @@ def _format_unavailable_cameras_list(
 ) -> str:
     """Format the list of unavailable cameras with overflow handling."""
     if not unavailable_cameras:
-        return ""
+        return "None"
 
     count = len(unavailable_cameras)
 
@@ -381,25 +382,80 @@ def _format_unavailable_cameras_list(
 
 
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
-    """Handle options flow for camera selection."""
+    """Handle options flow for camera selection.
+
+    This flow runs fresh camera discovery when opened to ensure
+    all cameras (including Reolink) are found immediately.
+    """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         self._config_entry = config_entry
+        self._discovered_cameras: list[DiscoveredCamera] = []
+        self._available_cameras: list[DiscoveredCamera] = []
+        self._unavailable_cameras: list[DiscoveredCamera] = []
+        self._discovery_complete: bool = False
+
+    async def _run_discovery(self) -> None:
+        """Run fresh camera discovery.
+
+        Creates a new DiscoveryCoordinator to ensure we get the latest cameras
+        from all integrations (UniFi Protect, Reolink, etc.) without relying
+        on potentially stale coordinator data.
+        """
+        from .discovery import DiscoveryCoordinator
+
+        try:
+            _LOGGER.info("Options flow: Running fresh camera discovery")
+
+            # Create a fresh discovery coordinator (not the cached one)
+            discovery = DiscoveryCoordinator(self.hass, self._config_entry)
+            self._discovered_cameras = await discovery.discover_all()
+
+            # Separate available and unavailable
+            self._available_cameras = [
+                c for c in self._discovered_cameras if c.available
+            ]
+            self._unavailable_cameras = [
+                c for c in self._discovered_cameras if not c.available
+            ]
+
+            self._discovery_complete = True
+
+            # Log by source for debugging
+            by_source: dict[str, int] = {}
+            for cam in self._discovered_cameras:
+                by_source[cam.source] = by_source.get(cam.source, 0) + 1
+
+            _LOGGER.info(
+                "Options flow: Discovered %d cameras (%d available, %d unavailable) - %s",
+                len(self._discovered_cameras),
+                len(self._available_cameras),
+                len(self._unavailable_cameras),
+                ", ".join(f"{k}: {v}" for k, v in sorted(by_source.items())),
+            )
+
+        except Exception as err:
+            _LOGGER.error("Options flow: Discovery failed: %s", err, exc_info=True)
+            self._discovered_cameras = []
+            self._available_cameras = []
+            self._unavailable_cameras = []
+            self._discovery_complete = True
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle main options flow - camera selection."""
-        coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        """Handle main options flow - camera selection.
 
-        if coordinator is None:
-            _LOGGER.error("Coordinator not found for options flow")
-            return self.async_abort(reason="coordinator_not_found")
+        Runs fresh discovery when first opened to ensure all cameras are found.
+        """
+        # Run fresh discovery if not already done
+        if not self._discovery_complete:
+            await self._run_discovery()
 
-        all_cameras = coordinator.discovered_cameras
-        available_cameras = [cam for cam in all_cameras if cam.available]
-        unavailable_cameras = [cam for cam in all_cameras if not cam.available]
+        all_cameras = self._discovered_cameras
+        available_cameras = self._available_cameras
+        unavailable_cameras = self._unavailable_cameras
         unavailable_names = [cam.friendly_name for cam in unavailable_cameras]
 
         current_exclude_unavailable = self._config_entry.options.get(
@@ -480,9 +536,11 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                 ]
 
         # Build description placeholders
-        by_source = coordinator.get_cameras_by_source()
+        by_source: dict[str, int] = {}
+        for cam in all_cameras:
+            by_source[cam.source] = by_source.get(cam.source, 0) + 1
         source_summary = ", ".join(
-            f"{source}: {len(cams)}" for source, cams in by_source.items()
+            f"{source}: {count}" for source, count in sorted(by_source.items())
         )
 
         unavailable_list = _format_unavailable_cameras_list(unavailable_names)
@@ -517,7 +575,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                 "camera_count": str(len(all_cameras)),
                 "available_count": str(len(available_cameras)),
                 "unavailable_count": str(len(unavailable_cameras)),
-                "source_summary": source_summary,
+                "source_summary": source_summary or "No cameras discovered",
                 "unavailable_cameras": unavailable_list,
             },
         )

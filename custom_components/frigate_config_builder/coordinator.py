@@ -1,6 +1,6 @@
 """Data coordinator for Frigate Config Builder.
 
-Version: 0.4.0.0
+Version: 0.4.0.2
 Date: 2026-01-17
 """
 from __future__ import annotations
