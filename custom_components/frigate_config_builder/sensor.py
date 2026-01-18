@@ -1,6 +1,6 @@
 """Sensor entities for Frigate Config Builder.
 
-Version: 0.4.0.2
+Version: 0.4.0.3
 Date: 2026-01-17
 
 Provides:
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-VERSION = "0.4.0.2"
+VERSION = "0.4.0.3"
 
 # How often to poll Frigate status
 FRIGATE_POLL_INTERVAL = timedelta(minutes=5)

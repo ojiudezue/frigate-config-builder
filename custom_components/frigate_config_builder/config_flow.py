@@ -1,11 +1,11 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.2
+Version: 0.4.0.3
 Date: 2026-01-17
 
 Changelog:
-- 0.4.0.2: Options flow now runs fresh discovery when opened (fixes Reolink delay)
-- 0.4.0.1: Bug fixes
+- 0.4.0.3: Options flow now has multiple steps for editing connection, features, retention
+- 0.4.0.2: Options flow runs fresh discovery when opened (fixes Reolink delay)
 - 0.4.0.0: Multi-step initial setup with options flow camera selection
 """
 from __future__ import annotations
@@ -382,10 +382,13 @@ def _format_unavailable_cameras_list(
 
 
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
-    """Handle options flow for camera selection.
+    """Handle options flow with multiple configuration steps.
 
-    This flow runs fresh camera discovery when opened to ensure
-    all cameras (including Reolink) are found immediately.
+    Steps:
+    1. init - Camera selection
+    2. connection - Frigate URL, output path, auto-push
+    3. features - Audio, face recognition, LPR, etc.
+    4. retention - Recording retention settings
     """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
@@ -395,24 +398,20 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
         self._available_cameras: list[DiscoveredCamera] = []
         self._unavailable_cameras: list[DiscoveredCamera] = []
         self._discovery_complete: bool = False
+        # Store changes across steps
+        self._options: dict[str, Any] = dict(config_entry.options)
+        self._data_updates: dict[str, Any] = {}
 
     async def _run_discovery(self) -> None:
-        """Run fresh camera discovery.
-
-        Creates a new DiscoveryCoordinator to ensure we get the latest cameras
-        from all integrations (UniFi Protect, Reolink, etc.) without relying
-        on potentially stale coordinator data.
-        """
+        """Run fresh camera discovery."""
         from .discovery import DiscoveryCoordinator
 
         try:
             _LOGGER.info("Options flow: Running fresh camera discovery")
 
-            # Create a fresh discovery coordinator (not the cached one)
             discovery = DiscoveryCoordinator(self.hass, self._config_entry)
             self._discovered_cameras = await discovery.discover_all()
 
-            # Separate available and unavailable
             self._available_cameras = [
                 c for c in self._discovered_cameras if c.available
             ]
@@ -422,7 +421,6 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
             self._discovery_complete = True
 
-            # Log by source for debugging
             by_source: dict[str, int] = {}
             for cam in self._discovered_cameras:
                 by_source[cam.source] = by_source.get(cam.source, 0) + 1
@@ -445,11 +443,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle main options flow - camera selection.
-
-        Runs fresh discovery when first opened to ensure all cameras are found.
-        """
-        # Run fresh discovery if not already done
+        """Step 1: Camera selection."""
         if not self._discovery_complete:
             await self._run_discovery()
 
@@ -458,18 +452,14 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
         unavailable_cameras = self._unavailable_cameras
         unavailable_names = [cam.friendly_name for cam in unavailable_cameras]
 
-        current_exclude_unavailable = self._config_entry.options.get(
-            CONF_EXCLUDE_UNAVAILABLE, True
-        )
-        current_auto_groups = self._config_entry.options.get(CONF_AUTO_GROUPS, True)
+        current_exclude_unavailable = self._options.get(CONF_EXCLUDE_UNAVAILABLE, True)
+        current_auto_groups = self._options.get(CONF_AUTO_GROUPS, True)
 
         if user_input is not None:
             exclude_unavailable = user_input.get(CONF_EXCLUDE_UNAVAILABLE, True)
             select_all = user_input.get(CONF_SELECT_ALL, False)
 
-            # Determine which cameras to include
             if select_all:
-                # Select all visible cameras
                 if exclude_unavailable:
                     selected_ids = [cam.id for cam in available_cameras]
                 else:
@@ -477,20 +467,18 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
             else:
                 selected_ids = user_input.get(CONF_SELECTED_CAMERAS, [])
 
-            # Filter out unavailable if needed
             if exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 selected_ids = [
                     cam_id for cam_id in selected_ids if cam_id not in unavailable_ids
                 ]
 
-            options = {
-                CONF_SELECTED_CAMERAS: selected_ids,
-                CONF_EXCLUDE_UNAVAILABLE: exclude_unavailable,
-                CONF_AUTO_GROUPS: user_input.get(CONF_AUTO_GROUPS, True),
-            }
+            self._options[CONF_SELECTED_CAMERAS] = selected_ids
+            self._options[CONF_EXCLUDE_UNAVAILABLE] = exclude_unavailable
+            self._options[CONF_AUTO_GROUPS] = user_input.get(CONF_AUTO_GROUPS, True)
 
-            return self.async_create_entry(title="", data=options)
+            # Go to next step
+            return await self.async_step_connection()
 
         # Build camera selection options
         camera_options: dict[str, str] = {}
@@ -515,13 +503,11 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
             camera_options[cam.id] = label
 
         # Determine default selection
-        current_selected = self._config_entry.options.get(CONF_SELECTED_CAMERAS)
+        current_selected = self._options.get(CONF_SELECTED_CAMERAS)
 
         if current_selected is None:
-            # First time opening - select ALL available cameras
             default_selected = [cam.id for cam in cameras_to_show]
         else:
-            # Filter current selection to only include cameras that still exist
             if current_exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 default_selected = [
@@ -535,7 +521,6 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                     cam_id for cam_id in current_selected if cam_id in all_ids
                 ]
 
-        # Build description placeholders
         by_source: dict[str, int] = {}
         for cam in all_cameras:
             by_source[cam.source] = by_source.get(cam.source, 0) + 1
@@ -545,22 +530,18 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
         unavailable_list = _format_unavailable_cameras_list(unavailable_names)
 
-        # Form fields - cameras first, then options below
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    # Select All toggle at the top
                     vol.Optional(
                         CONF_SELECT_ALL,
                         default=False,
                     ): BooleanSelector(),
-                    # Camera selection
                     vol.Required(
                         CONF_SELECTED_CAMERAS,
                         default=default_selected,
                     ): cv.multi_select(camera_options),
-                    # Filter options below
                     vol.Optional(
                         CONF_EXCLUDE_UNAVAILABLE,
                         default=current_exclude_unavailable,
@@ -578,4 +559,224 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                 "source_summary": source_summary or "No cameras discovered",
                 "unavailable_cameras": unavailable_list,
             },
+        )
+
+    async def async_step_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 2: Connection settings (Frigate URL, output path)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # Validate output path
+            output_path = user_input.get(CONF_OUTPUT_PATH, "")
+            if output_path and not output_path.endswith((".yml", ".yaml")):
+                errors[CONF_OUTPUT_PATH] = "invalid_path"
+
+            # Validate Frigate URL
+            frigate_url = user_input.get(CONF_FRIGATE_URL)
+            if frigate_url and not frigate_url.startswith(("http://", "https://")):
+                errors[CONF_FRIGATE_URL] = "invalid_url"
+
+            if not errors:
+                # Store data updates (these go to config_entry.data, not options)
+                if CONF_OUTPUT_PATH in user_input:
+                    self._data_updates[CONF_OUTPUT_PATH] = user_input[CONF_OUTPUT_PATH]
+                if CONF_FRIGATE_URL in user_input:
+                    self._data_updates[CONF_FRIGATE_URL] = user_input.get(CONF_FRIGATE_URL)
+                if CONF_AUTO_PUSH in user_input:
+                    self._data_updates[CONF_AUTO_PUSH] = user_input.get(CONF_AUTO_PUSH, False)
+
+                return await self.async_step_features()
+
+        # Current values from config_entry.data
+        current_output = self._config_entry.data.get(CONF_OUTPUT_PATH, DEFAULT_OUTPUT_PATH)
+        current_url = self._config_entry.data.get(CONF_FRIGATE_URL, "")
+        current_auto_push = self._config_entry.data.get(CONF_AUTO_PUSH, False)
+
+        return self.async_show_form(
+            step_id="connection",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_OUTPUT_PATH,
+                        default=current_output,
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
+                    vol.Optional(
+                        CONF_FRIGATE_URL,
+                        description={"suggested_value": current_url},
+                    ): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+                    vol.Optional(
+                        CONF_AUTO_PUSH,
+                        default=current_auto_push,
+                    ): BooleanSelector(),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_features(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 3: Feature settings."""
+        if user_input is not None:
+            # Store feature settings in data_updates
+            for key in [
+                CONF_AUDIO_DETECTION,
+                CONF_FACE_RECOGNITION,
+                CONF_FACE_RECOGNITION_MODEL,
+                CONF_SEMANTIC_SEARCH,
+                CONF_SEMANTIC_SEARCH_MODEL,
+                CONF_LPR,
+                CONF_BIRD_CLASSIFICATION,
+                CONF_BIRDSEYE_ENABLED,
+                CONF_BIRDSEYE_MODE,
+            ]:
+                if key in user_input:
+                    self._data_updates[key] = user_input[key]
+
+            return await self.async_step_retention()
+
+        # Current values from config_entry.data
+        data = self._config_entry.data
+
+        return self.async_show_form(
+            step_id="features",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_AUDIO_DETECTION,
+                        default=data.get(CONF_AUDIO_DETECTION, True),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_FACE_RECOGNITION,
+                        default=data.get(CONF_FACE_RECOGNITION, False),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_FACE_RECOGNITION_MODEL,
+                        default=data.get(CONF_FACE_RECOGNITION_MODEL, DEFAULT_MODEL_SIZE),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=MODEL_SIZES,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_SEMANTIC_SEARCH,
+                        default=data.get(CONF_SEMANTIC_SEARCH, False),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_SEMANTIC_SEARCH_MODEL,
+                        default=data.get(CONF_SEMANTIC_SEARCH_MODEL, DEFAULT_MODEL_SIZE),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=MODEL_SIZES,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_LPR,
+                        default=data.get(CONF_LPR, False),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_BIRD_CLASSIFICATION,
+                        default=data.get(CONF_BIRD_CLASSIFICATION, False),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_BIRDSEYE_ENABLED,
+                        default=data.get(CONF_BIRDSEYE_ENABLED, True),
+                    ): BooleanSelector(),
+                    vol.Optional(
+                        CONF_BIRDSEYE_MODE,
+                        default=data.get(CONF_BIRDSEYE_MODE, DEFAULT_BIRDSEYE_MODE),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=BIRDSEYE_MODES,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_retention(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 4: Retention settings - final step."""
+        if user_input is not None:
+            # Store retention settings in data_updates
+            for key in [
+                CONF_RETAIN_ALERTS,
+                CONF_RETAIN_DETECTIONS,
+                CONF_RETAIN_MOTION,
+                CONF_RETAIN_SNAPSHOTS,
+            ]:
+                if key in user_input:
+                    self._data_updates[key] = user_input[key]
+
+            # Now save everything
+            # Update config_entry.data with data_updates
+            if self._data_updates:
+                new_data = {**self._config_entry.data, **self._data_updates}
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry,
+                    data=new_data,
+                )
+
+            # Return options (camera selection, exclude_unavailable, auto_groups)
+            return self.async_create_entry(title="", data=self._options)
+
+        # Current values from config_entry.data
+        data = self._config_entry.data
+
+        return self.async_show_form(
+            step_id="retention",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_RETAIN_ALERTS,
+                        default=data.get(CONF_RETAIN_ALERTS, DEFAULT_RETAIN_ALERTS),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=365,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="days",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_RETAIN_DETECTIONS,
+                        default=data.get(CONF_RETAIN_DETECTIONS, DEFAULT_RETAIN_DETECTIONS),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=365,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="days",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_RETAIN_MOTION,
+                        default=data.get(CONF_RETAIN_MOTION, DEFAULT_RETAIN_MOTION),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=365,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="days",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_RETAIN_SNAPSHOTS,
+                        default=data.get(CONF_RETAIN_SNAPSHOTS, DEFAULT_RETAIN_SNAPSHOTS),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=365,
+                            mode=NumberSelectorMode.BOX,
+                            unit_of_measurement="days",
+                        )
+                    ),
+                }
+            ),
         )

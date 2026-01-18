@@ -101,7 +101,50 @@
           "exclude_unavailable": "When enabled, cameras that are currently offline or disconnected won't appear in the list above",
           "auto_groups_from_areas": "Automatically organize cameras into groups based on their assigned Home Assistant areas"
         }
+      },
+      "connection": {
+        "title": "Connection settings",
+        "description": "Configure where to save configurations and how to connect to Frigate.",
+        "data": {
+          "output_path": "Save location",
+          "frigate_url": "Frigate URL",
+          "auto_push": "Auto-apply to Frigate after generating"
+        },
+        "data_description": {
+          "output_path": "File path for the generated frigate.yml (e.g., /config/frigate.yml)",
+          "frigate_url": "Your Frigate web interface URL (e.g., http://192.168.1.100:5000)",
+          "auto_push": "Automatically send the config to Frigate and restart it whenever you generate"
+        }
+      },
+      "features": {
+        "title": "Frigate features",
+        "description": "Enable or disable AI features. Each feature uses additional CPU/GPU resources.",
+        "data": {
+          "audio_detection": "Audio events (glass breaking, alarms, yelling)",
+          "face_recognition": "Recognize familiar faces",
+          "face_recognition_model": "Face recognition quality",
+          "semantic_search": "Search recordings by description",
+          "semantic_search_model": "Search quality",
+          "lpr": "License plate recognition",
+          "bird_classification": "Identify bird species",
+          "birdseye_enabled": "Birdseye overview camera",
+          "birdseye_mode": "When to show cameras in Birdseye"
+        }
+      },
+      "retention": {
+        "title": "Recording retention",
+        "description": "How many days to keep different types of recordings.\n\nLonger retention = more storage space needed.",
+        "data": {
+          "retain_alerts": "Important events (alerts)",
+          "retain_detections": "Object detections",
+          "retain_motion": "Motion recordings",
+          "retain_snapshots": "Snapshot images"
+        }
       }
+    },
+    "error": {
+      "invalid_path": "File path must end with .yml or .yaml",
+      "invalid_url": "Please enter a valid URL (e.g., http://frigate:5000)"
     },
     "abort": {
       "coordinator_not_found": "Still discovering cameras... Please wait a moment and try again."

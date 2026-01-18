@@ -1,6 +1,6 @@
 """Binary sensor entities for Frigate Config Builder.
 
-Version: 0.4.0.2
+Version: 0.4.0.3
 Date: 2026-01-17
 
 Provides:
