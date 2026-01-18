@@ -1,12 +1,12 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.0
+Version: 0.4.0.1
 Date: 2026-01-17
 
 Features:
 - Multi-step initial setup (connection, hardware, mqtt, features, retention)
-- Options flow with camera selection and exclude unavailable toggle
-- Comma-separated list of unavailable cameras with overflow handling
+- Options flow with camera selection and filtering options
+- Select all toggle for convenience
 """
 from __future__ import annotations
 
@@ -83,6 +83,9 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 MAX_UNAVAILABLE_DISPLAY = 5
+
+# Internal key for select all toggle (not persisted)
+CONF_SELECT_ALL = "select_all_cameras"
 
 
 class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -406,8 +409,19 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             exclude_unavailable = user_input.get(CONF_EXCLUDE_UNAVAILABLE, True)
-            selected_ids = user_input.get(CONF_SELECTED_CAMERAS, [])
+            select_all = user_input.get(CONF_SELECT_ALL, False)
 
+            # Determine which cameras to include
+            if select_all:
+                # Select all visible cameras
+                if exclude_unavailable:
+                    selected_ids = [cam.id for cam in available_cameras]
+                else:
+                    selected_ids = [cam.id for cam in all_cameras]
+            else:
+                selected_ids = user_input.get(CONF_SELECTED_CAMERAS, [])
+
+            # Filter out unavailable if needed
             if exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 selected_ids = [
@@ -422,6 +436,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
             return self.async_create_entry(title="", data=options)
 
+        # Build camera selection options
         camera_options: dict[str, str] = {}
 
         if current_exclude_unavailable:
@@ -443,11 +458,14 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
             camera_options[cam.id] = label
 
+        # Determine default selection
         current_selected = self._config_entry.options.get(CONF_SELECTED_CAMERAS)
 
         if current_selected is None:
-            default_selected = [cam.id for cam in available_cameras]
+            # First time opening - select ALL available cameras
+            default_selected = [cam.id for cam in cameras_to_show]
         else:
+            # Filter current selection to only include cameras that still exist
             if current_exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 default_selected = [
@@ -461,6 +479,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                     cam_id for cam_id in current_selected if cam_id in all_ids
                 ]
 
+        # Build description placeholders
         by_source = coordinator.get_cameras_by_source()
         source_summary = ", ".join(
             f"{source}: {len(cams)}" for source, cams in by_source.items()
@@ -468,18 +487,26 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
         unavailable_list = _format_unavailable_cameras_list(unavailable_names)
 
+        # Form fields - cameras first, then options below
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    # Select All toggle at the top
                     vol.Optional(
-                        CONF_EXCLUDE_UNAVAILABLE,
-                        default=current_exclude_unavailable,
+                        CONF_SELECT_ALL,
+                        default=False,
                     ): BooleanSelector(),
+                    # Camera selection
                     vol.Required(
                         CONF_SELECTED_CAMERAS,
                         default=default_selected,
                     ): cv.multi_select(camera_options),
+                    # Filter options below
+                    vol.Optional(
+                        CONF_EXCLUDE_UNAVAILABLE,
+                        default=current_exclude_unavailable,
+                    ): BooleanSelector(),
                     vol.Optional(
                         CONF_AUTO_GROUPS,
                         default=current_auto_groups,

@@ -90,14 +90,16 @@
         "title": "Choose your cameras",
         "description": "Found **{camera_count} cameras** from {source_summary}.\n\n✅ {available_count} online  •  ⚠️ {unavailable_count} offline\n\n{unavailable_cameras}",
         "data": {
-          "exclude_unavailable": "Hide offline cameras",
+          "select_all_cameras": "Select all cameras",
           "selected_cameras": "Cameras to include",
+          "exclude_unavailable": "Show only online cameras",
           "auto_groups_from_areas": "Auto-group by Home Assistant areas"
         },
         "data_description": {
-          "exclude_unavailable": "Don't show cameras that are currently disconnected or unavailable",
-          "selected_cameras": "Select which cameras to include in your Frigate configuration",
-          "auto_groups_from_areas": "Automatically create camera groups based on their assigned Home Assistant areas"
+          "select_all_cameras": "Check this to quickly select all cameras, then submit",
+          "selected_cameras": "Choose which cameras to include in your Frigate configuration",
+          "exclude_unavailable": "When enabled, cameras that are currently offline or disconnected won't appear in the list above",
+          "auto_groups_from_areas": "Automatically organize cameras into groups based on their assigned Home Assistant areas"
         }
       }
     },
