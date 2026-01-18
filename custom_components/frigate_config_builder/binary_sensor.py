@@ -1,6 +1,6 @@
 """Binary sensor entities for Frigate Config Builder.
 
-Version: 0.3.0.2
+Version: 0.3.0.3
 Date: 2026-01-17
 
 Provides:
@@ -78,7 +78,7 @@ class FrigateConfigBuilderConfigStaleSensor(
             name="Frigate Config Builder",
             manufacturer="Community",
             model="Config Builder",
-            sw_version="0.3.0.2",
+            sw_version="0.3.0.3",
         )
 
     @property

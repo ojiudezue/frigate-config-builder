@@ -109,6 +109,9 @@
     "button": {
       "generate": {
         "name": "Generate Config"
+      },
+      "refresh_cameras": {
+        "name": "Refresh Cameras"
       }
     },
     "sensor": {
