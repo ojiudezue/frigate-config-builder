@@ -1,6 +1,6 @@
 """Reolink camera discovery adapter.
 
-Version: 0.3.0.3
+Version: 0.4.0.0
 Date: 2026-01-17
 
 Discovers cameras from the native Reolink integration.
@@ -48,17 +48,13 @@ class ReolinkAdapter(CameraAdapter):
         return "reolink"
 
     def _get_reolink_host_data(self) -> dict[str, Any]:
-        """Get Reolink integration host data for all configured devices.
-
-        Returns dict mapping device serial -> host object with credentials.
-        """
+        """Get Reolink integration host data for all configured devices."""
         hosts: dict[str, Any] = {}
 
         reolink_data = self.hass.data.get("reolink", {})
         for entry_id, data in reolink_data.items():
             if hasattr(data, "host"):
                 host = data.host
-                # The host object has ip, username, password, port etc.
                 if hasattr(host, "unique_id"):
                     hosts[host.unique_id] = host
                     _LOGGER.debug(
@@ -75,16 +71,7 @@ class ReolinkAdapter(CameraAdapter):
         channel: int = 0,
         stream: str = "main",
     ) -> str | None:
-        """Build RTSP URL from Reolink host object.
-
-        Args:
-            host: Reolink host object from integration data
-            channel: Channel number (0-based)
-            stream: 'main' for clear, 'sub' for fluent
-
-        Returns:
-            RTSP URL string or None if unable to build
-        """
+        """Build RTSP URL from Reolink host object."""
         try:
             ip = getattr(host, "api_host", None)
             username = getattr(host, "username", "admin")
@@ -94,9 +81,6 @@ class ReolinkAdapter(CameraAdapter):
             if not ip:
                 return None
 
-            # Reolink RTSP URL format
-            # rtsp://user:pass@ip:port/h264Preview_CH_STREAM
-            # where CH is 01, 02, etc (1-indexed) and STREAM is main/sub
             channel_str = f"{channel + 1:02d}"
             url = f"rtsp://{username}:{password}@{ip}:{rtsp_port}/h264Preview_{channel_str}_{stream}"
 
@@ -117,12 +101,9 @@ class ReolinkAdapter(CameraAdapter):
         device_reg = dr.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
 
-        # Get Reolink host data for URL construction
         reolink_hosts = self._get_reolink_host_data()
         _LOGGER.debug("Found %d Reolink hosts", len(reolink_hosts))
 
-        # Group camera entities by device
-        # Include DISABLED entities - we can still build URLs for them
         devices_cameras: dict[str, dict[str, list[er.RegistryEntry]]] = {}
 
         for entity in entity_reg.entities.values():
@@ -131,7 +112,6 @@ class ReolinkAdapter(CameraAdapter):
             if not entity.device_id:
                 continue
 
-            # Skip snapshot entities
             if "snapshot" in entity.entity_id.lower():
                 continue
 
@@ -139,40 +119,33 @@ class ReolinkAdapter(CameraAdapter):
             if device_id not in devices_cameras:
                 devices_cameras[device_id] = {"clear": [], "fluent": []}
 
-            # Categorize by stream type based on entity_id
             entity_id_lower = entity.entity_id.lower()
             if "_clear" in entity_id_lower:
                 devices_cameras[device_id]["clear"].append(entity)
             elif "_fluent" in entity_id_lower:
                 devices_cameras[device_id]["fluent"].append(entity)
             else:
-                # Single-stream camera (older models) - treat as main
                 devices_cameras[device_id]["clear"].append(entity)
 
         _LOGGER.debug(
             "Found %d Reolink devices with camera entities", len(devices_cameras)
         )
 
-        # Process each device
         for device_id, stream_entities in devices_cameras.items():
             device = device_reg.async_get(device_id)
             if not device:
                 continue
 
-            # Get device name (user-defined or default)
             device_name = device.name_by_user or device.name or "Reolink Camera"
 
-            # Get device serial for host lookup
             device_serial = None
             for identifier in device.identifiers:
                 if identifier[0] == "reolink":
                     device_serial = identifier[1]
                     break
 
-            # Get host data for this device
             host = reolink_hosts.get(device_serial) if device_serial else None
 
-            # Get area from device
             area = None
             if device.area_id:
                 area_entry = area_reg.async_get_area(device.area_id)
@@ -190,16 +163,12 @@ class ReolinkAdapter(CameraAdapter):
                 "found" if host else "not found",
             )
 
-            # If no clear entities but we have fluent, that's fine
-            # We can build clear URLs from host data
             if not clear_entities and not fluent_entities:
                 _LOGGER.debug("No camera entities for device %s", device_name)
                 continue
 
-            # Determine how many lenses this camera has
             lens_count = max(len(clear_entities), len(fluent_entities), 1)
 
-            # Process each lens
             for lens_idx in range(lens_count):
                 try:
                     camera = await self._create_camera_for_lens(
@@ -227,7 +196,7 @@ class ReolinkAdapter(CameraAdapter):
         return cameras
 
     def _extract_lens_number(self, entity_id: str) -> int | None:
-        """Extract lens number from entity ID (e.g., '_lens_0' -> 0)."""
+        """Extract lens number from entity ID."""
         match = re.search(r"_lens_(\d+)", entity_id.lower())
         if match:
             return int(match.group(1))
@@ -243,13 +212,12 @@ class ReolinkAdapter(CameraAdapter):
             entity_lens = self._extract_lens_number(entity.entity_id)
             if entity_lens == lens_idx:
                 return entity
-            # Single-lens cameras don't have lens number
             if entity_lens is None and lens_idx == 0:
                 return entity
         return None
 
     async def _get_stream_url(self, entity_id: str) -> str | None:
-        """Get RTSP stream URL from camera entity using stream_source()."""
+        """Get RTSP stream URL from camera entity."""
         try:
             camera_component = self.hass.data.get("camera")
             if not camera_component:
@@ -282,7 +250,6 @@ class ReolinkAdapter(CameraAdapter):
         """Create a DiscoveredCamera for a specific lens."""
         is_multi_lens = lens_count > 1
 
-        # Build camera name with lens suffix for multi-lens
         if is_multi_lens:
             lens_suffix = "wide" if lens_idx == 0 else "ptz" if lens_idx == 1 else f"lens{lens_idx}"
             friendly_name = f"{device_name} ({lens_suffix.upper()})"
@@ -291,11 +258,9 @@ class ReolinkAdapter(CameraAdapter):
             friendly_name = device_name
             cam_name = self.normalize_name(device_name)
 
-        # Find entities for this lens
         clear_entity = self._find_entity_for_lens(clear_entities, lens_idx)
         fluent_entity = self._find_entity_for_lens(fluent_entities, lens_idx)
 
-        # Try to get stream URLs from entities first (if enabled)
         record_url = None
         detect_url = None
 
@@ -305,7 +270,6 @@ class ReolinkAdapter(CameraAdapter):
         if fluent_entity and not fluent_entity.disabled:
             detect_url = await self._get_stream_url(fluent_entity.entity_id)
 
-        # If we couldn't get URLs from entities, try building from host data
         if not record_url and host:
             record_url = self._build_rtsp_url(host, channel=lens_idx, stream="main")
             _LOGGER.debug("Built record URL from host data: %s", record_url[:50] + "..." if record_url else None)
@@ -314,7 +278,6 @@ class ReolinkAdapter(CameraAdapter):
             detect_url = self._build_rtsp_url(host, channel=lens_idx, stream="sub")
             _LOGGER.debug("Built detect URL from host data: %s", detect_url[:50] + "..." if detect_url else None)
 
-        # Final fallback - use what we have
         if not record_url and detect_url:
             record_url = detect_url
         if not detect_url and record_url:
@@ -328,7 +291,6 @@ class ReolinkAdapter(CameraAdapter):
             )
             return None
 
-        # Check availability based on fluent entity state (it's usually enabled)
         available = True
         if fluent_entity:
             state = self.hass.states.get(fluent_entity.entity_id)
@@ -348,7 +310,7 @@ class ReolinkAdapter(CameraAdapter):
             record_url=record_url,
             detect_url=detect_url,
             go2rtc_url=record_url,
-            width=640,  # Will be auto-detected by Frigate
+            width=640,
             height=360,
             area=area,
             available=available,

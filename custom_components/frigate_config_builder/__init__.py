@@ -1,15 +1,15 @@
 """Frigate Config Builder integration for Home Assistant.
 
-Version: 0.3.0.0
+Version: 0.4.0.0
 Date: 2026-01-17
 
-This integration auto-discovers cameras from various HA integrations
-and generates complete Frigate NVR configuration files.
-
-Milestone 3: Added button, sensor, and binary_sensor entities.
+Automatically discovers cameras from your Home Assistant integrations
+(UniFi Protect, Reolink, generic RTSP, etc.) and generates a complete
+Frigate NVR configuration file with one click.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -32,6 +32,10 @@ PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
 ]
 
+# Discovery timing - allow other integrations to fully initialize
+DISCOVERY_STARTUP_DELAY = 5  # seconds - fast initial attempt
+DISCOVERY_RETRY_DELAY = 15  # seconds - retry if no cameras found
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Frigate Config Builder component."""
@@ -45,13 +49,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = FrigateConfigBuilderCoordinator(hass, entry)
 
-    # Perform initial refresh
-    await coordinator.async_config_entry_first_refresh()
-
-    # Store coordinator
+    # Store coordinator early so platforms can access it
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Set up platforms
+    # Set up platforms first (they'll show "loading" state)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services
@@ -60,18 +61,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
-    # Fire discovery complete event
-    hass.bus.async_fire(
-        f"{DOMAIN}_discovery_complete",
-        {
-            "camera_count": coordinator.cameras_discovered_count,
-            "new_cameras": [c.name for c in coordinator.discovered_cameras if c.is_new],
-        },
+    # Schedule delayed discovery to allow other integrations to fully load
+    async def delayed_first_discovery():
+        """Run first discovery after a short delay."""
+        await asyncio.sleep(DISCOVERY_STARTUP_DELAY)
+
+        _LOGGER.info("Running initial camera discovery...")
+        await coordinator.async_refresh()
+
+        # If no cameras found, retry with longer delay
+        if coordinator.cameras_discovered_count == 0:
+            _LOGGER.info(
+                "No cameras found initially, retrying in %ds...",
+                DISCOVERY_RETRY_DELAY,
+            )
+            await asyncio.sleep(DISCOVERY_RETRY_DELAY)
+            await coordinator.async_refresh()
+
+        # Fire discovery complete event
+        hass.bus.async_fire(
+            f"{DOMAIN}_discovery_complete",
+            {
+                "camera_count": coordinator.cameras_discovered_count,
+                "sources": list(coordinator.get_cameras_by_source().keys()),
+            },
+        )
+
+        _LOGGER.info(
+            "Camera discovery complete: found %d cameras",
+            coordinator.cameras_discovered_count,
+        )
+
+    # Start background discovery
+    entry.async_create_background_task(
+        hass,
+        delayed_first_discovery(),
+        "frigate_config_builder_discovery",
     )
 
     _LOGGER.info(
-        "Frigate Config Builder set up successfully with %d cameras discovered",
-        coordinator.cameras_discovered_count,
+        "Frigate Config Builder initialized, discovery starting in %ds",
+        DISCOVERY_STARTUP_DELAY,
     )
     return True
 
@@ -92,14 +122,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options update."""
     _LOGGER.debug("Options updated for Frigate Config Builder")
-    # Reload the entry to apply new options
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def _async_register_services(hass: HomeAssistant) -> None:
     """Register integration services."""
-
-    # Only register once
     if hass.services.has_service(DOMAIN, "generate"):
         return
 
@@ -110,14 +137,13 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             _LOGGER.error("No Frigate Config Builder entries configured")
             return
 
-        # Use first entry (single instance design)
-        coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][entries[0].entry_id]
+        coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][
+            entries[0].entry_id
+        ]
         push = call.data.get("push", False)
 
         try:
             await coordinator.async_generate_config(push=push)
-
-            # Fire event for automations
             hass.bus.async_fire(
                 f"{DOMAIN}_config_generated",
                 {
@@ -126,7 +152,6 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                     "pushed": push,
                 },
             )
-
         except Exception as err:
             _LOGGER.error("Failed to generate Frigate config: %s", err)
             raise
@@ -138,12 +163,12 @@ async def _async_register_services(hass: HomeAssistant) -> None:
             _LOGGER.error("No Frigate Config Builder entries configured")
             return
 
-        coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][entries[0].entry_id]
+        coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][
+            entries[0].entry_id
+        ]
 
         try:
             await coordinator.async_refresh()
-
-            # Fire event for automations
             hass.bus.async_fire(
                 f"{DOMAIN}_cameras_refreshed",
                 {
@@ -153,22 +178,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
                     ],
                 },
             )
-
         except Exception as err:
             _LOGGER.error("Failed to refresh cameras: %s", err)
             raise
 
-    # Register services
-    hass.services.async_register(
-        DOMAIN,
-        "generate",
-        handle_generate,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "refresh_cameras",
-        handle_refresh_cameras,
-    )
-
+    hass.services.async_register(DOMAIN, "generate", handle_generate)
+    hass.services.async_register(DOMAIN, "refresh_cameras", handle_refresh_cameras)
     _LOGGER.debug("Registered Frigate Config Builder services")

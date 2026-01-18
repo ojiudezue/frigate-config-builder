@@ -1,6 +1,6 @@
 """Data coordinator for Frigate Config Builder.
 
-Version: 0.3.0.3
+Version: 0.4.0.0
 Date: 2026-01-17
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(minutes=30),  # Periodic discovery refresh
+            update_interval=timedelta(minutes=30),
         )
         self.entry = entry
         self.discovery = DiscoveryCoordinator(hass, entry)
@@ -51,25 +51,20 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch data from all discovery adapters."""
         _LOGGER.debug("Running camera discovery")
 
-        # Run discovery across all adapters
         self.discovered_cameras = await self.discovery.discover_all()
 
-        # Check if cameras changed (new or removed)
         current_ids = {cam.id for cam in self.discovered_cameras}
         selected = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
 
-        # Mark new cameras
         for cam in self.discovered_cameras:
             cam.is_new = cam.id not in self._previous_camera_ids
 
-        # Detect staleness (cameras changed since last generation)
         if self._previous_camera_ids and current_ids != self._previous_camera_ids:
             self.config_stale = True
             _LOGGER.info("Camera configuration has changed, config is stale")
 
         self._previous_camera_ids = current_ids
 
-        # Get adapter status for diagnostics
         adapter_status = self.discovery.get_adapter_status()
 
         return {
@@ -81,33 +76,23 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     async def async_generate_config(self, push: bool = False) -> str:
-        """Generate Frigate configuration file.
-
-        Args:
-            push: Whether to push to Frigate API after writing file
-
-        Returns:
-            Generated YAML configuration string
-        """
+        """Generate Frigate configuration file."""
         import time
 
         start = time.monotonic()
 
-        # Get selected cameras (default to all available if none selected)
         selected_ids = set(self.entry.options.get(CONF_SELECTED_CAMERAS, []))
         exclude_unavailable = self.entry.options.get(CONF_EXCLUDE_UNAVAILABLE, True)
 
         if selected_ids:
             cameras = [c for c in self.discovered_cameras if c.id in selected_ids]
         else:
-            # If no selection made yet, use all cameras
             cameras = self.discovered_cameras
             _LOGGER.info(
                 "No cameras explicitly selected, using all %d discovered cameras",
                 len(cameras),
             )
 
-        # Apply exclude_unavailable filter
         if exclude_unavailable:
             original_count = len(cameras)
             cameras = [c for c in cameras if c.available]
@@ -117,19 +102,15 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     original_count - len(cameras),
                 )
 
-        # Generate config
         config_yaml = await self.generator.generate(cameras)
 
-        # Write to file
         output_path = self.entry.data.get("output_path", "/config/www/frigate.yml")
         await write_config_file(self.hass, output_path, config_yaml)
 
-        # Optionally push to Frigate
         frigate_url = self.entry.data.get("frigate_url")
         if push and frigate_url:
             await push_to_frigate(frigate_url, config_yaml, restart=True)
 
-        # Update state
         self.last_generated = datetime.now()
         self.last_generation_duration = time.monotonic() - start
         self.config_stale = False
@@ -153,7 +134,6 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             cameras = self.discovered_cameras
 
-        # Apply exclude_unavailable filter
         if exclude_unavailable:
             cameras = [c for c in cameras if c.available]
 

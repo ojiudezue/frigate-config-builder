@@ -2,113 +2,116 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connection Settings",
-        "description": "Configure where to save the generated Frigate config and optional Frigate API connection.",
+        "title": "Where to save your config",
+        "description": "Choose where to save your generated Frigate configuration file.\n\nOptionally connect directly to Frigate to apply changes automatically.",
         "data": {
-          "output_path": "Output Path",
+          "output_path": "Save location",
           "frigate_url": "Frigate URL (optional)",
-          "auto_push": "Auto-push config to Frigate"
+          "auto_push": "Auto-apply to Frigate after generating"
         },
         "data_description": {
-          "output_path": "Path to save the generated frigate.yml file",
-          "frigate_url": "URL to Frigate instance for API push (e.g., http://frigate:5000)",
-          "auto_push": "Automatically push config to Frigate after generation"
+          "output_path": "File path for the generated frigate.yml (e.g., /config/frigate.yml)",
+          "frigate_url": "Your Frigate web interface URL (e.g., http://192.168.1.100:5000)",
+          "auto_push": "Automatically send the config to Frigate and restart it whenever you generate"
         }
       },
       "hardware": {
-        "title": "Hardware Settings",
-        "description": "Configure your Frigate hardware acceleration and detector settings.",
+        "title": "Your hardware setup",
+        "description": "Tell us about your hardware so we can optimize Frigate for best performance.\n\nNot sure? The defaults work well for most Intel systems with a Coral TPU.",
         "data": {
-          "detector_type": "Detector Type",
-          "detector_device": "Detector Device",
-          "hwaccel": "Hardware Acceleration",
-          "network_interfaces": "Network Interfaces"
+          "detector_type": "AI detector",
+          "detector_device": "Detector device",
+          "hwaccel": "Video decoder",
+          "network_interfaces": "Network interfaces"
         },
         "data_description": {
-          "detector_type": "Type of object detection hardware",
-          "detector_device": "Device path or identifier for detector",
-          "hwaccel": "Hardware acceleration for video decoding",
-          "network_interfaces": "Network interfaces for RTSP (comma-separated)"
+          "detector_type": "What hardware runs AI object detection? Coral TPU is fastest and recommended.",
+          "detector_device": "Device path like /dev/bus/usb/001/002 for USB Coral, or 'pci' for PCIe Coral",
+          "hwaccel": "How to decode video streams. VAAPI for Intel, CUDA for NVIDIA.",
+          "network_interfaces": "Network interfaces connected to cameras (comma-separated, e.g., eth0, br0)"
         }
       },
       "mqtt": {
-        "title": "MQTT Settings",
-        "description": "Configure MQTT connection for Frigate. MQTT detected: {mqtt_detected}",
+        "title": "MQTT connection",
+        "description": "Frigate needs MQTT to communicate with Home Assistant.\n\n{mqtt_detected}",
         "data": {
-          "mqtt_auto": "Use Home Assistant MQTT",
-          "mqtt_host": "MQTT Host",
-          "mqtt_port": "MQTT Port",
-          "mqtt_user": "MQTT Username",
-          "mqtt_password": "MQTT Password"
+          "mqtt_auto": "Use my Home Assistant MQTT broker",
+          "mqtt_host": "MQTT server",
+          "mqtt_port": "Port",
+          "mqtt_user": "Username",
+          "mqtt_password": "Password"
         },
         "data_description": {
-          "mqtt_auto": "Use the same MQTT broker as Home Assistant",
-          "mqtt_host": "MQTT broker hostname or IP (if not using HA MQTT)",
-          "mqtt_port": "MQTT broker port",
-          "mqtt_user": "MQTT username (if required)",
-          "mqtt_password": "MQTT password (if required)"
+          "mqtt_auto": "Recommended: Uses the same MQTT broker as Home Assistant",
+          "mqtt_host": "Hostname or IP address of your MQTT broker",
+          "mqtt_port": "Usually 1883 (unencrypted) or 8883 (TLS)",
+          "mqtt_user": "Leave blank if no authentication required",
+          "mqtt_password": "Leave blank if no authentication required"
         }
       },
       "features": {
-        "title": "Feature Settings",
-        "description": "Enable optional Frigate features.",
+        "title": "Frigate features",
+        "description": "Enable the AI features you want. Each feature uses additional CPU/GPU resources.\n\nYou can always change these later.",
         "data": {
-          "audio_detection": "Audio Detection",
-          "face_recognition": "Face Recognition",
-          "face_recognition_model": "Face Recognition Model Size",
-          "semantic_search": "Semantic Search",
-          "semantic_search_model": "Semantic Search Model Size",
-          "lpr": "License Plate Recognition",
-          "bird_classification": "Bird Classification",
-          "birdseye_enabled": "Birdseye View",
-          "birdseye_mode": "Birdseye Mode"
+          "audio_detection": "Audio events (glass breaking, alarms, yelling)",
+          "face_recognition": "Recognize familiar faces",
+          "face_recognition_model": "Face recognition quality",
+          "semantic_search": "Search recordings by description",
+          "semantic_search_model": "Search quality",
+          "lpr": "License plate recognition",
+          "bird_classification": "Identify bird species",
+          "birdseye_enabled": "Birdseye overview camera",
+          "birdseye_mode": "When to show cameras in Birdseye"
         }
       },
       "retention": {
-        "title": "Retention Settings",
-        "description": "Configure how long Frigate keeps recordings and snapshots.",
+        "title": "How long to keep recordings",
+        "description": "Set how many days to keep different types of recordings.\n\nLonger retention = more storage space needed.",
         "data": {
-          "retain_alerts": "Alert Retention (days)",
-          "retain_detections": "Detection Retention (days)",
-          "retain_motion": "Motion Retention (days)",
-          "retain_snapshots": "Snapshot Retention (days)"
+          "retain_alerts": "Important events (alerts)",
+          "retain_detections": "Object detections",
+          "retain_motion": "Motion recordings",
+          "retain_snapshots": "Snapshot images"
         }
       }
     },
     "error": {
-      "invalid_path": "Output path must end with .yml",
-      "invalid_url": "Invalid URL format",
+      "invalid_path": "File path must end with .yml or .yaml",
+      "invalid_url": "Please enter a valid URL (e.g., http://frigate:5000)",
       "required": "This field is required"
     },
     "abort": {
-      "already_configured": "Frigate Config Builder is already configured"
+      "already_configured": "Frigate Config Builder is already set up. Click Configure to change settings."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Camera Selection",
-        "description": "Discovered {camera_count} cameras ({source_summary}).\n\n{available_count} available, {unavailable_count} unavailable.\n\nUnavailable: {unavailable_cameras}",
+        "title": "Choose your cameras",
+        "description": "Found **{camera_count} cameras** from {source_summary}.\n\n✅ {available_count} online  •  ⚠️ {unavailable_count} offline\n\n{unavailable_cameras}",
         "data": {
-          "exclude_unavailable": "Exclude unavailable cameras",
-          "selected_cameras": "Select cameras to include",
-          "auto_groups_from_areas": "Auto-create groups from HA areas"
+          "exclude_unavailable": "Hide offline cameras",
+          "selected_cameras": "Cameras to include",
+          "auto_groups_from_areas": "Auto-group by Home Assistant areas"
         },
         "data_description": {
-          "exclude_unavailable": "Hide cameras that are currently offline or unavailable from selection",
-          "selected_cameras": "Choose which discovered cameras to include in the Frigate config",
-          "auto_groups_from_areas": "Automatically group cameras based on their assigned Home Assistant areas"
+          "exclude_unavailable": "Don't show cameras that are currently disconnected or unavailable",
+          "selected_cameras": "Select which cameras to include in your Frigate configuration",
+          "auto_groups_from_areas": "Automatically create camera groups based on their assigned Home Assistant areas"
         }
       }
     },
     "abort": {
-      "coordinator_not_found": "Integration not fully loaded. Please wait and try again."
+      "coordinator_not_found": "Still discovering cameras... Please wait a moment and try again."
     }
   },
   "entity": {
     "button": {
       "generate": {
         "name": "Generate Config"
+      },
+      "push_to_frigate": {
+        "name": "Push to Frigate"
       },
       "refresh_cameras": {
         "name": "Refresh Cameras"
@@ -119,26 +122,38 @@
         "name": "Cameras Selected"
       },
       "cameras_discovered": {
-        "name": "Cameras Discovered"
+        "name": "Cameras Found"
       },
       "last_generated": {
         "name": "Last Generated"
+      },
+      "discovery_status": {
+        "name": "Discovery Status"
+      },
+      "frigate_status": {
+        "name": "Frigate Status"
       }
     },
     "binary_sensor": {
       "config_stale": {
-        "name": "Config Stale"
+        "name": "Config Needs Update"
       }
     }
   },
   "services": {
-    "generate_config": {
-      "name": "Generate Config",
-      "description": "Generate Frigate configuration file from discovered cameras."
+    "generate": {
+      "name": "Generate Configuration",
+      "description": "Create a new Frigate configuration file from your selected cameras.",
+      "fields": {
+        "push": {
+          "name": "Push to Frigate",
+          "description": "Send the new configuration to Frigate and restart it."
+        }
+      }
     },
     "refresh_cameras": {
-      "name": "Refresh Cameras",
-      "description": "Refresh the list of discovered cameras from all integrations."
+      "name": "Refresh Camera List",
+      "description": "Scan all integrations for new or changed cameras."
     }
   }
 }

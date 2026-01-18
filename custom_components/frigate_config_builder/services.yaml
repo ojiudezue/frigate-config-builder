@@ -1,15 +1,15 @@
 generate:
-  name: Generate Frigate Config
-  description: Generate the Frigate configuration file from discovered cameras.
+  name: Generate Configuration
+  description: Create a new Frigate configuration file from your selected cameras and save it to the configured output path.
   fields:
     push:
       name: Push to Frigate
-      description: Push the configuration to Frigate API and restart.
+      description: After generating the config, send it to Frigate and restart the service to apply changes.
       required: false
       default: false
       selector:
         boolean:
 
 refresh_cameras:
-  name: Refresh Cameras
-  description: Re-run camera discovery to find new or changed cameras.
+  name: Refresh Camera List
+  description: Scan all configured camera integrations (UniFi Protect, Reolink, Amcrest, etc.) to discover new or changed cameras.

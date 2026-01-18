@@ -1,11 +1,10 @@
 """Binary sensor entities for Frigate Config Builder.
 
-Version: 0.3.0.3
+Version: 0.4.0.0
 Date: 2026-01-17
 
 Provides:
-- Config Stale: Indicates when the generated config is out of date
-  (new cameras discovered or cameras removed since last generation)
+- Config Needs Update: Turns on when camera configuration has changed
 """
 from __future__ import annotations
 
@@ -31,6 +30,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+VERSION = "0.4.0.0"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -40,17 +41,15 @@ async def async_setup_entry(
     """Set up binary sensor entities from a config entry."""
     coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [
-        FrigateConfigBuilderConfigStaleSensor(coordinator, entry),
-    ]
-
-    async_add_entities(entities)
+    async_add_entities([
+        ConfigStaleBinarySensor(coordinator, entry),
+    ])
 
 
-class FrigateConfigBuilderConfigStaleSensor(
+class ConfigStaleBinarySensor(
     CoordinatorEntity["FrigateConfigBuilderCoordinator"], BinarySensorEntity
 ):
-    """Binary sensor indicating if the config is stale."""
+    """Binary sensor indicating if config needs regeneration."""
 
     _attr_has_entity_name = True
 
@@ -65,8 +64,8 @@ class FrigateConfigBuilderConfigStaleSensor(
         self.entity_description = BinarySensorEntityDescription(
             key="config_stale",
             translation_key="config_stale",
-            icon="mdi:alert-circle-outline",
             device_class=BinarySensorDeviceClass.PROBLEM,
+            icon="mdi:file-alert",
         )
         self._attr_unique_id = f"{entry.entry_id}_config_stale"
 
@@ -78,36 +77,26 @@ class FrigateConfigBuilderConfigStaleSensor(
             name="Frigate Config Builder",
             manufacturer="Community",
             model="Config Builder",
-            sw_version="0.3.0.3",
+            sw_version=VERSION,
         )
 
     @property
     def is_on(self) -> bool:
-        """Return True if config is stale (needs regeneration)."""
+        """Return true if config is stale (needs regeneration)."""
         return self.coordinator.config_stale
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
-        attrs: dict[str, Any] = {
-            "last_generated": (
-                self.coordinator.last_generated.isoformat()
-                if self.coordinator.last_generated
-                else None
-            ),
-        }
+        attrs: dict[str, Any] = {}
 
-        # Include info about what changed
-        if self.coordinator.config_stale:
-            new_cameras = [
-                cam.name
-                for cam in self.coordinator.discovered_cameras
-                if cam.is_new
-            ]
+        if self.coordinator.data:
+            new_cameras = self.coordinator.data.get("new_cameras", [])
             if new_cameras:
                 attrs["new_cameras"] = new_cameras
-                attrs["reason"] = "new_cameras_discovered"
-            else:
-                attrs["reason"] = "cameras_changed"
+                attrs["reason"] = "New cameras discovered"
+
+        if self.coordinator.last_generated:
+            attrs["last_generated"] = self.coordinator.last_generated.isoformat()
 
         return attrs

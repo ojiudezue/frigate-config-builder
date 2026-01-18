@@ -1,6 +1,6 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.3.0.3
+Version: 0.4.0.0
 Date: 2026-01-17
 
 Features:
@@ -82,7 +82,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Maximum cameras to show in the unavailable list before truncating
 MAX_UNAVAILABLE_DISPLAY = 5
 
 
@@ -102,12 +101,10 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate output path
             output_path = user_input.get(CONF_OUTPUT_PATH, "")
-            if not output_path or not output_path.endswith(".yml"):
+            if not output_path or not output_path.endswith((".yml", ".yaml")):
                 errors[CONF_OUTPUT_PATH] = "invalid_path"
 
-            # Validate Frigate URL if provided
             frigate_url = user_input.get(CONF_FRIGATE_URL)
             if frigate_url and not frigate_url.startswith(("http://", "https://")):
                 errors[CONF_FRIGATE_URL] = "invalid_url"
@@ -140,8 +137,6 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle step 2: Hardware settings."""
-        errors: dict[str, str] = {}
-
         if user_input is not None:
             self._data.update(user_input)
             return await self.async_step_mqtt()
@@ -180,7 +175,6 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                     ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
                 }
             ),
-            errors=errors,
         )
 
     async def async_step_mqtt(
@@ -190,7 +184,6 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate MQTT config if not using auto
             if not user_input.get(CONF_MQTT_AUTO, True):
                 if not user_input.get(CONF_MQTT_HOST):
                     errors[CONF_MQTT_HOST] = "required"
@@ -199,7 +192,6 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._data.update(user_input)
                 return await self.async_step_features()
 
-        # Check if HA has MQTT configured
         mqtt_entries = self.hass.config_entries.async_entries("mqtt")
         has_mqtt = bool(mqtt_entries)
 
@@ -233,15 +225,15 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-            description_placeholders={"mqtt_detected": "Yes" if has_mqtt else "No"},
+            description_placeholders={
+                "mqtt_detected": "✅ MQTT detected" if has_mqtt else "⚠️ No MQTT found"
+            },
         )
 
     async def async_step_features(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle step 4: Feature settings."""
-        errors: dict[str, str] = {}
-
         if user_input is not None:
             self._data.update(user_input)
             return await self.async_step_retention()
@@ -250,13 +242,9 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="features",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(CONF_AUDIO_DETECTION, default=True): BooleanSelector(),
                     vol.Optional(
-                        CONF_AUDIO_DETECTION,
-                        default=True,
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_FACE_RECOGNITION,
-                        default=False,
+                        CONF_FACE_RECOGNITION, default=False
                     ): BooleanSelector(),
                     vol.Optional(
                         CONF_FACE_RECOGNITION_MODEL,
@@ -268,8 +256,7 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                         )
                     ),
                     vol.Optional(
-                        CONF_SEMANTIC_SEARCH,
-                        default=False,
+                        CONF_SEMANTIC_SEARCH, default=False
                     ): BooleanSelector(),
                     vol.Optional(
                         CONF_SEMANTIC_SEARCH_MODEL,
@@ -280,18 +267,11 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional(CONF_LPR, default=False): BooleanSelector(),
                     vol.Optional(
-                        CONF_LPR,
-                        default=False,
+                        CONF_BIRD_CLASSIFICATION, default=False
                     ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRD_CLASSIFICATION,
-                        default=False,
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRDSEYE_ENABLED,
-                        default=True,
-                    ): BooleanSelector(),
+                    vol.Optional(CONF_BIRDSEYE_ENABLED, default=True): BooleanSelector(),
                     vol.Optional(
                         CONF_BIRDSEYE_MODE,
                         default=DEFAULT_BIRDSEYE_MODE,
@@ -303,23 +283,18 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
-            errors=errors,
         )
 
     async def async_step_retention(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle step 5: Retention settings."""
-        errors: dict[str, str] = {}
-
         if user_input is not None:
             self._data.update(user_input)
 
-            # Check if we already have an entry
             await self.async_set_unique_id(DOMAIN)
             self._abort_if_unique_id_configured()
 
-            # Create the config entry
             return self.async_create_entry(
                 title="Frigate Config Builder",
                 data=self._data,
@@ -375,7 +350,6 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
-            errors=errors,
         )
 
     @staticmethod
@@ -389,30 +363,18 @@ def _format_unavailable_cameras_list(
     unavailable_cameras: list[str],
     max_display: int = MAX_UNAVAILABLE_DISPLAY,
 ) -> str:
-    """Format the list of unavailable cameras with overflow handling.
-
-    Args:
-        unavailable_cameras: List of unavailable camera friendly names
-        max_display: Maximum cameras to display before truncating
-
-    Returns:
-        User-friendly formatted string like:
-        - "Camera A, Camera B" (if 2 cameras)
-        - "Camera A, Camera B, Camera C, +2 more" (if 5 cameras with max_display=3)
-        - "None" (if empty)
-    """
+    """Format the list of unavailable cameras with overflow handling."""
     if not unavailable_cameras:
-        return "None"
+        return ""
 
     count = len(unavailable_cameras)
 
     if count <= max_display:
-        return ", ".join(unavailable_cameras)
+        return f"⚠️ Offline: {', '.join(unavailable_cameras)}"
 
-    # Show first (max_display - 1) cameras + "and X more"
-    displayed = unavailable_cameras[: max_display]
+    displayed = unavailable_cameras[:max_display]
     remaining = count - max_display
-    return f"{', '.join(displayed)}, +{remaining} more"
+    return f"⚠️ Offline: {', '.join(displayed)}, +{remaining} more"
 
 
 class FrigateConfigBuilderOptionsFlow(OptionsFlow):
@@ -426,7 +388,6 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle main options flow - camera selection."""
-        # Get coordinator to access discovered cameras
         coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
 
         if coordinator is None:
@@ -434,31 +395,25 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
             return self.async_abort(reason="coordinator_not_found")
 
         all_cameras = coordinator.discovered_cameras
-
-        # Separate available and unavailable cameras
         available_cameras = [cam for cam in all_cameras if cam.available]
         unavailable_cameras = [cam for cam in all_cameras if not cam.available]
         unavailable_names = [cam.friendly_name for cam in unavailable_cameras]
 
-        # Get current options
         current_exclude_unavailable = self._config_entry.options.get(
-            CONF_EXCLUDE_UNAVAILABLE, True  # Default: exclude unavailable
+            CONF_EXCLUDE_UNAVAILABLE, True
         )
         current_auto_groups = self._config_entry.options.get(CONF_AUTO_GROUPS, True)
 
         if user_input is not None:
-            # Process submission
             exclude_unavailable = user_input.get(CONF_EXCLUDE_UNAVAILABLE, True)
             selected_ids = user_input.get(CONF_SELECTED_CAMERAS, [])
 
-            # If exclude_unavailable is True, ensure no unavailable cameras in selection
             if exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 selected_ids = [
                     cam_id for cam_id in selected_ids if cam_id not in unavailable_ids
                 ]
 
-            # Build final options
             options = {
                 CONF_SELECTED_CAMERAS: selected_ids,
                 CONF_EXCLUDE_UNAVAILABLE: exclude_unavailable,
@@ -467,42 +422,32 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
             return self.async_create_entry(title="", data=options)
 
-        # Build camera selection options based on exclude setting
-        # When showing the form, we show all cameras but mark unavailable ones
         camera_options: dict[str, str] = {}
 
-        # Determine which cameras to show in selection
         if current_exclude_unavailable:
-            # Only show available cameras
             cameras_to_show = available_cameras
         else:
-            # Show all cameras
             cameras_to_show = all_cameras
 
         for cam in cameras_to_show:
             label = f"{cam.friendly_name} ({cam.source})"
 
-            # Add badges for status
             badges = []
             if cam.is_new:
-                badges.append("NEW")
+                badges.append("✨ NEW")
             if not cam.available:
-                badges.append("UNAVAIL")
+                badges.append("⚠️ OFFLINE")
 
             if badges:
-                label = f"{label} [{', '.join(badges)}]"
+                label = f"{label} {' '.join(badges)}"
 
             camera_options[cam.id] = label
 
-        # Get currently selected cameras
-        # Default: all available cameras if no selection exists
         current_selected = self._config_entry.options.get(CONF_SELECTED_CAMERAS)
 
         if current_selected is None:
-            # First time - default to all available cameras
             default_selected = [cam.id for cam in available_cameras]
         else:
-            # Filter current selection based on exclude setting
             if current_exclude_unavailable:
                 unavailable_ids = {cam.id for cam in unavailable_cameras}
                 default_selected = [
@@ -511,19 +456,16 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                     if cam_id not in unavailable_ids and cam_id in camera_options
                 ]
             else:
-                # Keep all that still exist
                 all_ids = {cam.id for cam in all_cameras}
                 default_selected = [
                     cam_id for cam_id in current_selected if cam_id in all_ids
                 ]
 
-        # Build description placeholders
         by_source = coordinator.get_cameras_by_source()
         source_summary = ", ".join(
             f"{source}: {len(cams)}" for source, cams in by_source.items()
         )
 
-        # Format unavailable cameras list for display
         unavailable_list = _format_unavailable_cameras_list(unavailable_names)
 
         return self.async_show_form(
