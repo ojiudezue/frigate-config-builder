@@ -2,14 +2,16 @@
   "config": {
     "step": {
       "user": {
-        "title": "Where to save your config",
-        "description": "Choose where to save your generated Frigate configuration file.\n\nOptionally connect directly to Frigate to apply changes automatically.",
+        "title": "Frigate version and output",
+        "description": "Select your Frigate version and where to save the configuration.\n\nFrigate 0.17 has new features like GenAI and improved LPR models.",
         "data": {
+          "frigate_version": "Frigate version",
           "output_path": "Save location",
           "frigate_url": "Frigate URL (optional)",
           "auto_push": "Auto-apply to Frigate after generating"
         },
         "data_description": {
+          "frigate_version": "Select the version of Frigate you're running. 0.17 adds GenAI, YOLOv9, and tiered retention.",
           "output_path": "File path for the generated frigate.yml (e.g., /config/frigate.yml)",
           "frigate_url": "Your Frigate web interface URL (e.g., http://192.168.1.100:5000)",
           "auto_push": "Automatically send the config to Frigate and restart it whenever you generate"
@@ -17,7 +19,7 @@
       },
       "hardware": {
         "title": "Your hardware setup",
-        "description": "Tell us about your hardware so we can optimize Frigate for best performance.\n\nNot sure? The defaults work well for most Intel systems with a Coral TPU.",
+        "description": "Configure your AI detector and video decoding hardware.\n\nConfiguring for Frigate {frigate_version}.",
         "data": {
           "detector_type": "AI detector",
           "detector_device": "Detector device",
@@ -25,7 +27,7 @@
           "network_interfaces": "Network interfaces"
         },
         "data_description": {
-          "detector_type": "What hardware runs AI object detection? Coral TPU is fastest and recommended.",
+          "detector_type": "What hardware runs AI object detection? Coral TPU is fastest. YOLOv9 available in 0.17+.",
           "detector_device": "Device path like /dev/bus/usb/001/002 for USB Coral, or 'pci' for PCIe Coral",
           "hwaccel": "How to decode video streams. VAAPI for Intel, CUDA for NVIDIA.",
           "network_interfaces": "Network interfaces connected to cameras (comma-separated, e.g., eth0, br0)"
@@ -51,7 +53,7 @@
       },
       "features": {
         "title": "Frigate features",
-        "description": "Enable the AI features you want. Each feature uses additional CPU/GPU resources.\n\nYou can always change these later.",
+        "description": "Enable the AI features you want. Each feature uses additional CPU/GPU resources.\n\n{lpr_note}",
         "data": {
           "audio_detection": "Audio events (glass breaking, alarms, yelling)",
           "face_recognition": "Recognize familiar faces",
@@ -59,9 +61,31 @@
           "semantic_search": "Search recordings by description",
           "semantic_search_model": "Search quality",
           "lpr": "License plate recognition",
+          "lpr_model": "LPR model size",
           "bird_classification": "Identify bird species",
           "birdseye_enabled": "Birdseye overview camera",
-          "birdseye_mode": "When to show cameras in Birdseye"
+          "birdseye_mode": "When to show cameras in Birdseye",
+          "genai_enabled": "Enable GenAI descriptions (0.17+)"
+        },
+        "data_description": {
+          "lpr_model": "In Frigate 0.17+, 'small' performs better than the old 'large' model",
+          "genai_enabled": "Use AI to generate descriptions of events and enable review summaries"
+        }
+      },
+      "genai": {
+        "title": "GenAI configuration",
+        "description": "Configure the AI provider for generating event descriptions.\n\n{provider_help}",
+        "data": {
+          "genai_provider": "AI provider",
+          "genai_model": "Model name (optional)",
+          "genai_api_key": "API key",
+          "genai_base_url": "Base URL (for Azure/self-hosted)"
+        },
+        "data_description": {
+          "genai_provider": "Ollama runs locally with no API key. Cloud providers require API keys.",
+          "genai_model": "Specific model to use (e.g., llava, gemini-1.5-flash, gpt-4-vision-preview)",
+          "genai_api_key": "Required for Gemini, OpenAI, and Azure OpenAI",
+          "genai_base_url": "Required for Azure OpenAI. Optional for self-hosted Ollama."
         }
       },
       "retention": {
@@ -100,6 +124,65 @@
           "selected_cameras": "Choose which cameras to include in your Frigate configuration",
           "exclude_unavailable": "When enabled, cameras that are currently offline or disconnected won't appear in the list above",
           "auto_groups_from_areas": "Automatically organize cameras into groups based on their assigned Home Assistant areas"
+        }
+      },
+      "connection": {
+        "title": "Connection settings",
+        "description": "Configure Frigate version and connection settings.",
+        "data": {
+          "frigate_version": "Frigate version",
+          "output_path": "Save location",
+          "frigate_url": "Frigate URL (optional)",
+          "auto_push": "Auto-apply after generating"
+        },
+        "data_description": {
+          "frigate_version": "Changing version may affect available features and config structure",
+          "output_path": "File path for the generated frigate.yml",
+          "frigate_url": "Your Frigate web interface URL",
+          "auto_push": "Automatically send config to Frigate when generated"
+        }
+      },
+      "features": {
+        "title": "Frigate features",
+        "description": "Configure AI features for Frigate {frigate_version}.",
+        "data": {
+          "audio_detection": "Audio events",
+          "face_recognition": "Face recognition",
+          "face_recognition_model": "Face recognition model",
+          "semantic_search": "Semantic search",
+          "semantic_search_model": "Search model",
+          "lpr": "License plate recognition",
+          "lpr_model": "LPR model size",
+          "bird_classification": "Bird classification",
+          "birdseye_enabled": "Birdseye view",
+          "birdseye_mode": "Birdseye mode",
+          "genai_enabled": "Enable GenAI (0.17+)"
+        }
+      },
+      "genai": {
+        "title": "GenAI settings",
+        "description": "Configure the AI provider for event descriptions.\n\n{provider_help}",
+        "data": {
+          "genai_provider": "AI provider",
+          "genai_model": "Model name",
+          "genai_api_key": "API key",
+          "genai_base_url": "Base URL"
+        },
+        "data_description": {
+          "genai_provider": "Ollama is free and local. Cloud providers need API keys.",
+          "genai_model": "e.g., llava, gemini-1.5-flash, gpt-4-vision-preview",
+          "genai_api_key": "Required for cloud providers",
+          "genai_base_url": "For Azure OpenAI or self-hosted Ollama"
+        }
+      },
+      "retention": {
+        "title": "Retention settings",
+        "description": "How long to keep recordings.",
+        "data": {
+          "retain_alerts": "Alerts (days)",
+          "retain_detections": "Detections (days)",
+          "retain_motion": "Motion (days)",
+          "retain_snapshots": "Snapshots (days)"
         }
       }
     },

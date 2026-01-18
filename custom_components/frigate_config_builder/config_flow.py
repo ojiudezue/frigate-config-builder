@@ -1,9 +1,11 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.4
-Date: 2026-01-17
+Version: 0.4.0.5
+Date: 2026-01-18
 
 Changelog:
+- 0.4.0.5: Added Frigate version selection (0.14/0.17), GenAI config, YOLOv9 detector
+- 0.4.0.4: Options flow camera selection improvements
 - 0.4.0.3: Options flow now has multiple steps for editing connection, features, retention
 - 0.4.0.2: Options flow runs fresh discovery when opened (fixes Reolink delay)
 - 0.4.0.0: Multi-step initial setup with options flow camera selection
@@ -46,8 +48,15 @@ from .const import (
     CONF_FACE_RECOGNITION,
     CONF_FACE_RECOGNITION_MODEL,
     CONF_FRIGATE_URL,
+    CONF_FRIGATE_VERSION,
+    CONF_GENAI_API_KEY,
+    CONF_GENAI_BASE_URL,
+    CONF_GENAI_ENABLED,
+    CONF_GENAI_MODEL,
+    CONF_GENAI_PROVIDER,
     CONF_HWACCEL,
     CONF_LPR,
+    CONF_LPR_MODEL,
     CONF_MQTT_AUTO,
     CONF_MQTT_HOST,
     CONF_MQTT_PASSWORD,
@@ -65,7 +74,11 @@ from .const import (
     DEFAULT_BIRDSEYE_MODE,
     DEFAULT_DETECTOR_DEVICE,
     DEFAULT_DETECTOR_TYPE,
+    DEFAULT_FRIGATE_VERSION,
+    DEFAULT_GENAI_PROVIDER,
     DEFAULT_HWACCEL,
+    DEFAULT_LPR_MODEL_014,
+    DEFAULT_LPR_MODEL_017,
     DEFAULT_MODEL_SIZE,
     DEFAULT_MQTT_PORT,
     DEFAULT_NETWORK_INTERFACE,
@@ -74,8 +87,11 @@ from .const import (
     DEFAULT_RETAIN_DETECTIONS,
     DEFAULT_RETAIN_MOTION,
     DEFAULT_RETAIN_SNAPSHOTS,
-    DETECTOR_TYPES,
+    DETECTOR_TYPES_014,
+    DETECTOR_TYPES_017,
     DOMAIN,
+    FRIGATE_VERSIONS,
+    GENAI_PROVIDER_OPTIONS,
     HWACCEL_OPTIONS,
     MODEL_SIZES,
 )
@@ -87,6 +103,20 @@ MAX_UNAVAILABLE_DISPLAY = 5
 
 # Internal key for select all toggle (not persisted)
 CONF_SELECT_ALL = "select_all_cameras"
+
+
+def get_detector_types_for_version(frigate_version: str) -> list[str]:
+    """Get detector types available for a Frigate version."""
+    if frigate_version == "0.17":
+        return DETECTOR_TYPES_017
+    return DETECTOR_TYPES_014
+
+
+def get_default_lpr_model(frigate_version: str) -> str:
+    """Get default LPR model for a Frigate version."""
+    if frigate_version == "0.17":
+        return DEFAULT_LPR_MODEL_017
+    return DEFAULT_LPR_MODEL_014
 
 
 class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -122,6 +152,18 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(
+                        CONF_FRIGATE_VERSION,
+                        default=DEFAULT_FRIGATE_VERSION,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {"value": "0.14", "label": "Frigate 0.14.x (Stable)"},
+                                {"value": "0.17", "label": "Frigate 0.17.x (Latest)"},
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
                         CONF_OUTPUT_PATH,
                         default=DEFAULT_OUTPUT_PATH,
                     ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
@@ -145,6 +187,10 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data.update(user_input)
             return await self.async_step_mqtt()
 
+        # Get detector types based on selected Frigate version
+        frigate_version = self._data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
+        detector_types = get_detector_types_for_version(frigate_version)
+
         return self.async_show_form(
             step_id="hardware",
             data_schema=vol.Schema(
@@ -154,7 +200,7 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                         default=DEFAULT_DETECTOR_TYPE,
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            options=DETECTOR_TYPES,
+                            options=detector_types,
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -179,6 +225,9 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                     ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
                 }
             ),
+            description_placeholders={
+                "frigate_version": frigate_version,
+            },
         )
 
     async def async_step_mqtt(
@@ -240,53 +289,130 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle step 4: Feature settings."""
         if user_input is not None:
             self._data.update(user_input)
+            
+            # Check if we need GenAI step (0.17+ only)
+            frigate_version = self._data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
+            if frigate_version == "0.17" and user_input.get(CONF_GENAI_ENABLED, False):
+                return await self.async_step_genai()
+            
             return await self.async_step_retention()
+
+        frigate_version = self._data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
+        default_lpr_model = get_default_lpr_model(frigate_version)
+        is_017 = frigate_version == "0.17"
+
+        # Build schema based on Frigate version
+        schema_dict = {
+            vol.Optional(CONF_AUDIO_DETECTION, default=True): BooleanSelector(),
+            vol.Optional(CONF_FACE_RECOGNITION, default=False): BooleanSelector(),
+            vol.Optional(
+                CONF_FACE_RECOGNITION_MODEL,
+                default=DEFAULT_MODEL_SIZE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(CONF_SEMANTIC_SEARCH, default=False): BooleanSelector(),
+            vol.Optional(
+                CONF_SEMANTIC_SEARCH_MODEL,
+                default=DEFAULT_MODEL_SIZE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(CONF_LPR, default=False): BooleanSelector(),
+            vol.Optional(
+                CONF_LPR_MODEL,
+                default=default_lpr_model,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(CONF_BIRD_CLASSIFICATION, default=False): BooleanSelector(),
+            vol.Optional(CONF_BIRDSEYE_ENABLED, default=True): BooleanSelector(),
+            vol.Optional(
+                CONF_BIRDSEYE_MODE,
+                default=DEFAULT_BIRDSEYE_MODE,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=BIRDSEYE_MODES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+
+        # Add GenAI option for Frigate 0.17+
+        if is_017:
+            schema_dict[vol.Optional(CONF_GENAI_ENABLED, default=False)] = BooleanSelector()
 
         return self.async_show_form(
             step_id="features",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "frigate_version": frigate_version,
+                "lpr_note": "💡 In 0.17+, the 'small' LPR model performs better than the old 'large' model" if is_017 else "",
+            },
+        )
+
+    async def async_step_genai(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle step 4b: GenAI settings (Frigate 0.17+ only)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            provider = user_input.get(CONF_GENAI_PROVIDER, DEFAULT_GENAI_PROVIDER)
+            
+            # Validate API key for cloud providers
+            if provider in ("gemini", "openai", "azure_openai"):
+                if not user_input.get(CONF_GENAI_API_KEY):
+                    errors[CONF_GENAI_API_KEY] = "required"
+            
+            # Validate base URL for Azure OpenAI
+            if provider == "azure_openai":
+                if not user_input.get(CONF_GENAI_BASE_URL):
+                    errors[CONF_GENAI_BASE_URL] = "required"
+
+            if not errors:
+                self._data.update(user_input)
+                return await self.async_step_retention()
+
+        return self.async_show_form(
+            step_id="genai",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_AUDIO_DETECTION, default=True): BooleanSelector(),
-                    vol.Optional(
-                        CONF_FACE_RECOGNITION, default=False
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_FACE_RECOGNITION_MODEL,
-                        default=DEFAULT_MODEL_SIZE,
+                    vol.Required(
+                        CONF_GENAI_PROVIDER,
+                        default=DEFAULT_GENAI_PROVIDER,
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            options=MODEL_SIZES,
+                            options=[
+                                {"value": k, "label": v} for k, v in GENAI_PROVIDER_OPTIONS
+                            ],
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                    vol.Optional(
-                        CONF_SEMANTIC_SEARCH, default=False
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_SEMANTIC_SEARCH_MODEL,
-                        default=DEFAULT_MODEL_SIZE,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=MODEL_SIZES,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
+                    vol.Optional(CONF_GENAI_MODEL): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.TEXT)
                     ),
-                    vol.Optional(CONF_LPR, default=False): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRD_CLASSIFICATION, default=False
-                    ): BooleanSelector(),
-                    vol.Optional(CONF_BIRDSEYE_ENABLED, default=True): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRDSEYE_MODE,
-                        default=DEFAULT_BIRDSEYE_MODE,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=BIRDSEYE_MODES,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
+                    vol.Optional(CONF_GENAI_API_KEY): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
+                    vol.Optional(CONF_GENAI_BASE_URL): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.URL)
                     ),
                 }
             ),
+            errors=errors,
+            description_placeholders={
+                "provider_help": "Ollama runs locally. Cloud providers (Gemini, OpenAI, Azure) require API keys.",
+            },
         )
 
     async def async_step_retention(
@@ -386,9 +512,10 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
     Steps:
     1. init - Camera selection
-    2. connection - Frigate URL, output path, auto-push
-    3. features - Audio, face recognition, LPR, etc.
-    4. retention - Recording retention settings
+    2. connection - Frigate URL, output path, auto-push, Frigate version
+    3. features - Audio, face recognition, LPR, GenAI, etc.
+    4. genai - GenAI provider settings (if enabled, 0.17+ only)
+    5. retention - Recording retention settings
     """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
@@ -564,7 +691,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
     async def async_step_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Step 2: Connection settings (Frigate URL, output path)."""
+        """Step 2: Connection settings (Frigate version, URL, output path)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -580,6 +707,8 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
 
             if not errors:
                 # Store data updates (these go to config_entry.data, not options)
+                if CONF_FRIGATE_VERSION in user_input:
+                    self._data_updates[CONF_FRIGATE_VERSION] = user_input[CONF_FRIGATE_VERSION]
                 if CONF_OUTPUT_PATH in user_input:
                     self._data_updates[CONF_OUTPUT_PATH] = user_input[CONF_OUTPUT_PATH]
                 if CONF_FRIGATE_URL in user_input:
@@ -590,6 +719,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                 return await self.async_step_features()
 
         # Current values from config_entry.data
+        current_version = self._config_entry.data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
         current_output = self._config_entry.data.get(CONF_OUTPUT_PATH, DEFAULT_OUTPUT_PATH)
         current_url = self._config_entry.data.get(CONF_FRIGATE_URL, "")
         current_auto_push = self._config_entry.data.get(CONF_AUTO_PUSH, False)
@@ -598,6 +728,18 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
             step_id="connection",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_FRIGATE_VERSION,
+                        default=current_version,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {"value": "0.14", "label": "Frigate 0.14.x (Stable)"},
+                                {"value": "0.17", "label": "Frigate 0.17.x (Latest)"},
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Required(
                         CONF_OUTPUT_PATH,
                         default=current_output,
@@ -628,75 +770,189 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                 CONF_SEMANTIC_SEARCH,
                 CONF_SEMANTIC_SEARCH_MODEL,
                 CONF_LPR,
+                CONF_LPR_MODEL,
                 CONF_BIRD_CLASSIFICATION,
                 CONF_BIRDSEYE_ENABLED,
                 CONF_BIRDSEYE_MODE,
+                CONF_GENAI_ENABLED,
             ]:
                 if key in user_input:
                     self._data_updates[key] = user_input[key]
+
+            # Check if we need GenAI step
+            frigate_version = self._data_updates.get(
+                CONF_FRIGATE_VERSION, 
+                self._config_entry.data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
+            )
+            if frigate_version == "0.17" and user_input.get(CONF_GENAI_ENABLED, False):
+                return await self.async_step_genai()
 
             return await self.async_step_retention()
 
         # Current values from config_entry.data
         data = self._config_entry.data
+        
+        # Determine Frigate version (prefer update if set)
+        frigate_version = self._data_updates.get(
+            CONF_FRIGATE_VERSION, 
+            data.get(CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION)
+        )
+        is_017 = frigate_version == "0.17"
+        default_lpr_model = get_default_lpr_model(frigate_version)
+
+        # Build schema based on Frigate version
+        schema_dict = {
+            vol.Optional(
+                CONF_AUDIO_DETECTION,
+                default=data.get(CONF_AUDIO_DETECTION, True),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_FACE_RECOGNITION,
+                default=data.get(CONF_FACE_RECOGNITION, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_FACE_RECOGNITION_MODEL,
+                default=data.get(CONF_FACE_RECOGNITION_MODEL, DEFAULT_MODEL_SIZE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_SEMANTIC_SEARCH,
+                default=data.get(CONF_SEMANTIC_SEARCH, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_SEMANTIC_SEARCH_MODEL,
+                default=data.get(CONF_SEMANTIC_SEARCH_MODEL, DEFAULT_MODEL_SIZE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_LPR,
+                default=data.get(CONF_LPR, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_LPR_MODEL,
+                default=data.get(CONF_LPR_MODEL, default_lpr_model),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=MODEL_SIZES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_BIRD_CLASSIFICATION,
+                default=data.get(CONF_BIRD_CLASSIFICATION, False),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_BIRDSEYE_ENABLED,
+                default=data.get(CONF_BIRDSEYE_ENABLED, True),
+            ): BooleanSelector(),
+            vol.Optional(
+                CONF_BIRDSEYE_MODE,
+                default=data.get(CONF_BIRDSEYE_MODE, DEFAULT_BIRDSEYE_MODE),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=BIRDSEYE_MODES,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+
+        # Add GenAI option for Frigate 0.17+
+        if is_017:
+            schema_dict[vol.Optional(
+                CONF_GENAI_ENABLED,
+                default=data.get(CONF_GENAI_ENABLED, False),
+            )] = BooleanSelector()
 
         return self.async_show_form(
             step_id="features",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "frigate_version": frigate_version,
+            },
+        )
+
+    async def async_step_genai(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Step 3b: GenAI settings (Frigate 0.17+ only)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            provider = user_input.get(CONF_GENAI_PROVIDER, DEFAULT_GENAI_PROVIDER)
+            
+            # Validate API key for cloud providers
+            if provider in ("gemini", "openai", "azure_openai"):
+                if not user_input.get(CONF_GENAI_API_KEY):
+                    errors[CONF_GENAI_API_KEY] = "required"
+            
+            # Validate base URL for Azure OpenAI
+            if provider == "azure_openai":
+                if not user_input.get(CONF_GENAI_BASE_URL):
+                    errors[CONF_GENAI_BASE_URL] = "required"
+
+            if not errors:
+                # Store GenAI settings
+                for key in [
+                    CONF_GENAI_PROVIDER,
+                    CONF_GENAI_MODEL,
+                    CONF_GENAI_API_KEY,
+                    CONF_GENAI_BASE_URL,
+                ]:
+                    if key in user_input:
+                        self._data_updates[key] = user_input[key]
+                
+                return await self.async_step_retention()
+
+        # Current values
+        data = self._config_entry.data
+
+        return self.async_show_form(
+            step_id="genai",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(
-                        CONF_AUDIO_DETECTION,
-                        default=data.get(CONF_AUDIO_DETECTION, True),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_FACE_RECOGNITION,
-                        default=data.get(CONF_FACE_RECOGNITION, False),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_FACE_RECOGNITION_MODEL,
-                        default=data.get(CONF_FACE_RECOGNITION_MODEL, DEFAULT_MODEL_SIZE),
+                    vol.Required(
+                        CONF_GENAI_PROVIDER,
+                        default=data.get(CONF_GENAI_PROVIDER, DEFAULT_GENAI_PROVIDER),
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            options=MODEL_SIZES,
+                            options=[
+                                {"value": k, "label": v} for k, v in GENAI_PROVIDER_OPTIONS
+                            ],
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
                     vol.Optional(
-                        CONF_SEMANTIC_SEARCH,
-                        default=data.get(CONF_SEMANTIC_SEARCH, False),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_SEMANTIC_SEARCH_MODEL,
-                        default=data.get(CONF_SEMANTIC_SEARCH_MODEL, DEFAULT_MODEL_SIZE),
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=MODEL_SIZES,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
+                        CONF_GENAI_MODEL,
+                        description={"suggested_value": data.get(CONF_GENAI_MODEL, "")},
+                    ): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.TEXT)
                     ),
                     vol.Optional(
-                        CONF_LPR,
-                        default=data.get(CONF_LPR, False),
-                    ): BooleanSelector(),
+                        CONF_GENAI_API_KEY,
+                        description={"suggested_value": data.get(CONF_GENAI_API_KEY, "")},
+                    ): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
                     vol.Optional(
-                        CONF_BIRD_CLASSIFICATION,
-                        default=data.get(CONF_BIRD_CLASSIFICATION, False),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRDSEYE_ENABLED,
-                        default=data.get(CONF_BIRDSEYE_ENABLED, True),
-                    ): BooleanSelector(),
-                    vol.Optional(
-                        CONF_BIRDSEYE_MODE,
-                        default=data.get(CONF_BIRDSEYE_MODE, DEFAULT_BIRDSEYE_MODE),
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=BIRDSEYE_MODES,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
+                        CONF_GENAI_BASE_URL,
+                        description={"suggested_value": data.get(CONF_GENAI_BASE_URL, "")},
+                    ): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.URL)
                     ),
                 }
             ),
+            errors=errors,
+            description_placeholders={
+                "provider_help": "Ollama runs locally. Cloud providers require API keys.",
+            },
         )
 
     async def async_step_retention(
