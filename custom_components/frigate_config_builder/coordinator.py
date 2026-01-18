@@ -1,6 +1,6 @@
 """Data coordinator for Frigate Config Builder.
 
-Version: 0.4.0.3
+Version: 0.4.0.4
 Date: 2026-01-17
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_EXCLUDE_UNAVAILABLE, CONF_SELECTED_CAMERAS, DOMAIN
 from .discovery import DiscoveryCoordinator
@@ -113,7 +114,7 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if push and frigate_url:
             await push_to_frigate(frigate_url, config_yaml, restart=True)
 
-        self.last_generated = datetime.now()
+        self.last_generated = dt_util.utcnow()
         self.last_generation_duration = time.monotonic() - start
         self.config_stale = False
 

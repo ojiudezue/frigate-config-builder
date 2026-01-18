@@ -1,6 +1,6 @@
 """Button entities for Frigate Config Builder.
 
-Version: 0.4.0.3
+Version: 0.4.0.4
 Date: 2026-01-17
 
 Provides:
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-VERSION = "0.4.0.3"
+VERSION = "0.4.0.4"
 
 
 async def async_setup_entry(

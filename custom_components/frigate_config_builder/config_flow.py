@@ -1,6 +1,6 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.3
+Version: 0.4.0.4
 Date: 2026-01-17
 
 Changelog:

@@ -1,6 +1,6 @@
 """Sensor entities for Frigate Config Builder.
 
-Version: 0.4.0.3
+Version: 0.4.0.4
 Date: 2026-01-17
 
 Provides:
@@ -27,6 +27,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_FRIGATE_URL, DOMAIN
 
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-VERSION = "0.4.0.3"
+VERSION = "0.4.0.4"
 
 # How often to poll Frigate status
 FRIGATE_POLL_INTERVAL = timedelta(minutes=5)
@@ -398,4 +399,4 @@ class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
             self._last_error = str(err)
             _LOGGER.debug("Could not fetch Frigate status: %s", err)
 
-        self._last_check = datetime.now()
+        self._last_check = dt_util.utcnow()
