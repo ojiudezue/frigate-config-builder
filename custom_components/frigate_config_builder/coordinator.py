@@ -73,6 +73,8 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "selected_count": len(selected & current_ids),
             "adapter_status": adapter_status,
             "new_cameras": [c.id for c in self.discovered_cameras if c.is_new],
+            "last_generated": self.last_generated.isoformat() if self.last_generated else None,
+            "config_stale": self.config_stale,
         }
 
     async def async_generate_config(self, push: bool = False) -> str:
@@ -120,6 +122,9 @@ class FrigateConfigBuilderCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             len(cameras),
             self.last_generation_duration,
         )
+
+        # Notify all entities that data has changed (updates Last Generated sensor, etc.)
+        self.async_set_updated_data(self.data or {})
 
         return config_yaml
 

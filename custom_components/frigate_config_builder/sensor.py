@@ -1,6 +1,6 @@
 """Sensor entities for Frigate Config Builder.
 
-Version: 0.4.0.0
+Version: 0.4.0.2
 Date: 2026-01-17
 
 Provides:
@@ -12,7 +12,7 @@ Provides:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -39,7 +39,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-VERSION = "0.4.0.0"
+VERSION = "0.4.0.2"
+
+# How often to poll Frigate status
+FRIGATE_POLL_INTERVAL = timedelta(minutes=5)
 
 
 async def async_setup_entry(
@@ -50,7 +53,7 @@ async def async_setup_entry(
     """Set up sensor entities from a config entry."""
     coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [
+    entities: list[SensorEntity] = [
         CamerasSelectedSensor(coordinator, entry),
         CamerasFoundSensor(coordinator, entry),
         LastGeneratedSensor(coordinator, entry),
@@ -278,7 +281,14 @@ class DiscoveryStatusSensor(FrigateConfigBuilderBaseSensor):
 
 
 class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
-    """Sensor showing Frigate connection status."""
+    """Sensor showing Frigate connection status.
+
+    This sensor polls the Frigate API independently of the coordinator
+    to check connection status and version.
+    """
+
+    # Enable polling for this sensor (CoordinatorEntity disables it by default)
+    _attr_should_poll = True
 
     def __init__(
         self,
@@ -298,42 +308,94 @@ class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
         )
         self._frigate_version: str | None = None
         self._frigate_uptime: str | None = None
+        self._frigate_connected: bool = False
         self._last_check: datetime | None = None
+        self._last_error: str | None = None
 
     @property
     def native_value(self) -> str:
         """Return Frigate connection status."""
-        if self._frigate_version:
+        if self._frigate_connected and self._frigate_version:
             return f"v{self._frigate_version}"
-        return "unknown"
+        if self._last_error:
+            return "error"
+        return "disconnected"
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on connection status."""
+        if self._frigate_connected:
+            return "mdi:cctv"
+        return "mdi:cctv-off"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return Frigate details."""
         return {
             "url": self._entry.data.get(CONF_FRIGATE_URL),
+            "connected": self._frigate_connected,
             "version": self._frigate_version,
             "uptime": self._frigate_uptime,
             "last_check": self._last_check.isoformat() if self._last_check else None,
+            "last_error": self._last_error,
         }
 
     async def async_update(self) -> None:
-        """Fetch Frigate status."""
+        """Fetch Frigate status from API."""
         frigate_url = self._entry.data.get(CONF_FRIGATE_URL)
         if not frigate_url:
+            self._frigate_connected = False
+            self._last_error = "No Frigate URL configured"
             return
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{frigate_url.rstrip('/')}/api/stats",
-                    timeout=aiohttp.ClientTimeout(total=5),
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
                         self._frigate_version = data.get("service", {}).get("version")
-                        self._frigate_uptime = str(data.get("service", {}).get("uptime"))
-                        self._last_check = datetime.now()
-        except Exception as err:
-            _LOGGER.debug("Could not fetch Frigate status: %s", err)
+                        uptime_seconds = data.get("service", {}).get("uptime")
+                        if uptime_seconds:
+                            # Format uptime as human-readable
+                            hours, remainder = divmod(int(uptime_seconds), 3600)
+                            minutes, seconds = divmod(remainder, 60)
+                            if hours > 24:
+                                days = hours // 24
+                                hours = hours % 24
+                                self._frigate_uptime = f"{days}d {hours}h {minutes}m"
+                            else:
+                                self._frigate_uptime = f"{hours}h {minutes}m {seconds}s"
+                        self._frigate_connected = True
+                        self._last_error = None
+                        _LOGGER.debug(
+                            "Frigate status: connected, version %s",
+                            self._frigate_version,
+                        )
+                    else:
+                        self._frigate_connected = False
+                        self._last_error = f"HTTP {response.status}"
+                        _LOGGER.warning(
+                            "Frigate API returned status %d", response.status
+                        )
+
+        except aiohttp.ClientConnectorError as err:
+            self._frigate_connected = False
             self._frigate_version = None
+            self._last_error = "Connection refused"
+            _LOGGER.debug("Could not connect to Frigate: %s", err)
+
+        except TimeoutError:
+            self._frigate_connected = False
+            self._last_error = "Timeout"
+            _LOGGER.debug("Frigate connection timed out")
+
+        except Exception as err:
+            self._frigate_connected = False
+            self._frigate_version = None
+            self._last_error = str(err)
+            _LOGGER.debug("Could not fetch Frigate status: %s", err)
+
+        self._last_check = datetime.now()
