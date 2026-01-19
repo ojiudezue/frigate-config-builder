@@ -1,13 +1,18 @@
 """Amcrest/Dahua camera discovery adapter.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.6
+Date: 2026-01-19
 
 Changelog:
+- 0.4.0.6: Fixed HACS integration support (address vs host, rtsp_port)
 - 0.4.0.5: Added Dahua support (same protocol), fast path via hass.data
 - 0.4.0.4: Initial version with entity registry approach
 
 Discovers cameras from Amcrest and Dahua integrations.
+Supports both:
+- Core Home Assistant integrations
+- HACS custom integrations (Amcrest Custom, Dahua)
+
 Amcrest and Dahua cameras are interchangeable - they use the same:
 - RTSP URL format
 - API protocol
@@ -46,8 +51,12 @@ SUPPORTED_DOMAINS = ["amcrest", "dahua"]
 class AmcrestAdapter(CameraAdapter):
     """Discover cameras from Amcrest and Dahua integrations.
     
-    Amcrest and Dahua cameras are manufactured by the same company and use
-    identical protocols. This adapter discovers cameras from both integrations.
+    Supports both core HA integrations and HACS custom integrations:
+    - Core Amcrest integration
+    - HACS "Amcrest Custom" (bcpearce/HomeAssistant-Amcrest-Custom)
+    - HACS "Dahua" (rroller/dahua)
+    
+    All use the same Dahua protocol for RTSP streams.
     """
 
     @property
@@ -65,27 +74,39 @@ class AmcrestAdapter(CameraAdapter):
     def _get_devices_from_hass_data(self) -> list[dict[str, Any]]:
         """Get device info directly from hass.data for all supported integrations.
         
-        Both Amcrest and Dahua integrations store device data in hass.data.
-        This allows us to get camera info even before entities are fully loaded.
+        This is the fast path for core integrations that store hub objects.
+        HACS integrations may use different data structures.
         """
         devices: list[dict[str, Any]] = []
         
         for domain in SUPPORTED_DOMAINS:
             domain_data = self.hass.data.get(domain)
             if not domain_data:
+                _LOGGER.debug("No %s data in hass.data", domain)
                 continue
 
-            _LOGGER.debug("Found %s data in hass.data", domain)
+            _LOGGER.debug(
+                "Found %s data in hass.data, type=%s, keys=%s",
+                domain,
+                type(domain_data).__name__,
+                list(domain_data.keys()) if isinstance(domain_data, dict) else "N/A",
+            )
 
             if isinstance(domain_data, dict):
                 for entry_id, hub in domain_data.items():
-                    if entry_id in ("devices", "cameras"):
+                    # Skip internal keys
+                    if entry_id in ("devices", "cameras", "coordinators"):
                         continue
                         
                     try:
                         device_info = self._extract_device_from_hub(hub, entry_id, domain)
                         if device_info:
                             devices.append(device_info)
+                            _LOGGER.debug(
+                                "Extracted device from %s hub: %s",
+                                domain,
+                                device_info.get("host"),
+                            )
                     except Exception as err:
                         _LOGGER.debug(
                             "Could not extract device from %s hub %s: %s",
@@ -109,38 +130,57 @@ class AmcrestAdapter(CameraAdapter):
         """Extract device info from hub object (works for both Amcrest and Dahua)."""
         # The hub typically has an 'api' attribute with the camera object
         api = getattr(hub, "api", None)
-        if not api:
-            return None
-
-        # Get connection details - check multiple attribute names
-        host = (
-            getattr(api, "_host", None)
-            or getattr(hub, "host", None)
-            or getattr(api, "host", None)
-        )
-        if not host:
-            return None
-
-        username = (
-            getattr(api, "_user", None) 
-            or getattr(hub, "username", None)
-            or getattr(api, "username", None)
-            or "admin"
-        )
-        password = (
-            getattr(api, "_password", None) 
-            or getattr(hub, "password", None)
-            or getattr(api, "password", None)
-            or ""
-        )
-        port = (
-            getattr(api, "_port", None) 
-            or getattr(hub, "port", None)
-            or getattr(api, "rtsp_port", None)
-            or 554
-        )
         
-        name = getattr(hub, "name", None) or host
+        # Try multiple locations for host/address
+        host = None
+        for obj in [api, hub]:
+            if obj is None:
+                continue
+            host = (
+                getattr(obj, "_host", None)
+                or getattr(obj, "host", None)
+                or getattr(obj, "address", None)
+                or getattr(obj, "_address", None)
+            )
+            if host:
+                break
+                
+        if not host:
+            _LOGGER.debug("Hub %s has no host/address attribute", entry_id)
+            return None
+
+        # Get credentials - check multiple possible attribute names
+        username = None
+        password = None
+        port = None
+        
+        for obj in [api, hub]:
+            if obj is None:
+                continue
+            if username is None:
+                username = (
+                    getattr(obj, "_user", None) 
+                    or getattr(obj, "username", None)
+                    or getattr(obj, "_username", None)
+                )
+            if password is None:
+                password = (
+                    getattr(obj, "_password", None) 
+                    or getattr(obj, "password", None)
+                )
+            if port is None:
+                port = (
+                    getattr(obj, "rtsp_port", None)
+                    or getattr(obj, "_rtsp_port", None)
+                    or getattr(obj, "_port", None)
+                    or getattr(obj, "port", None)
+                )
+        
+        username = username or "admin"
+        password = password or ""
+        port = port or 554
+        
+        name = getattr(hub, "name", None) or getattr(hub, "_name", None) or host
 
         return {
             "host": host,
@@ -164,6 +204,7 @@ class AmcrestAdapter(CameraAdapter):
         processed_hosts: set[str] = set()
 
         # FAST PATH: Try to get devices directly from hass.data
+        # This works for core integrations and some HACS integrations
         fast_devices = self._get_devices_from_hass_data()
         for device_info in fast_devices:
             host = device_info.get("host")
@@ -176,29 +217,46 @@ class AmcrestAdapter(CameraAdapter):
                     processed_hosts.add(host)
 
         # FALLBACK: Get config entries for any we missed
+        # This is essential for HACS integrations that don't use hub objects
         for domain in SUPPORTED_DOMAINS:
             entries = self.hass.config_entries.async_entries(domain)
+            _LOGGER.debug("Found %d %s config entries", len(entries), domain)
             
             for config_entry in entries:
-                host = config_entry.data.get("host")
-                if host and host not in processed_hosts:
-                    try:
-                        camera = await self._create_camera_from_entry(
-                            config_entry, entity_reg, area_reg, domain
-                        )
-                        if camera:
-                            cameras.append(camera)
+                try:
+                    camera = await self._create_camera_from_entry(
+                        config_entry, entity_reg, area_reg, domain, processed_hosts
+                    )
+                    if camera:
+                        # Get host for deduplication
+                        host = self._get_host_from_entry(config_entry)
+                        if host:
                             processed_hosts.add(host)
-                    except Exception as err:
-                        _LOGGER.warning(
-                            "Failed to process %s entry %s: %s",
-                            domain,
-                            config_entry.entry_id,
-                            err,
-                        )
+                        cameras.append(camera)
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Failed to process %s entry %s: %s",
+                        domain,
+                        config_entry.entry_id,
+                        err,
+                    )
 
         _LOGGER.info("Discovered %d Amcrest/Dahua cameras", len(cameras))
         return cameras
+
+    def _get_host_from_entry(self, config_entry) -> str | None:
+        """Extract host/address from config entry, checking both data and options."""
+        # Check entry.data first, then entry.options
+        for source in [config_entry.data, config_entry.options]:
+            host = (
+                source.get("host")
+                or source.get("address")
+                or source.get("ip_address")
+                or source.get("ip")
+            )
+            if host:
+                return host
+        return None
 
     def _create_camera_from_device_info(
         self,
@@ -237,9 +295,6 @@ class AmcrestAdapter(CameraAdapter):
         area = self._find_area_for_device(entity_reg, area_reg, source_domain)
         available = self._check_availability(entity_reg, source_domain)
 
-        # Use consistent source name for both
-        source = "amcrest"  # Treat both as "amcrest" for consistency
-
         _LOGGER.debug(
             "Created %s camera via fast path: %s (host=%s, available=%s)",
             source_domain,
@@ -252,7 +307,7 @@ class AmcrestAdapter(CameraAdapter):
             id=f"amcrest_{cam_name}",
             name=cam_name,
             friendly_name=name,
-            source=source,
+            source="amcrest",  # Consistent source name
             record_url=record_url,
             detect_url=detect_url,
             go2rtc_url=record_url,
@@ -268,34 +323,84 @@ class AmcrestAdapter(CameraAdapter):
         entity_reg: er.EntityRegistry,
         area_reg: ar.AreaRegistry,
         domain: str,
+        processed_hosts: set[str],
     ) -> DiscoveredCamera | None:
-        """Create DiscoveredCamera from config entry (fallback path)."""
-        entry_data = config_entry.data
+        """Create DiscoveredCamera from config entry (fallback path).
+        
+        Handles both core and HACS integrations with different config key names:
+        - Core Amcrest: host, username, password, port
+        - Dahua HACS: address, username, password, port, rtsp_port
+        - Amcrest Custom HACS: Various formats
+        """
+        # Merge data and options (some integrations store in options)
+        entry_data = {**config_entry.data, **config_entry.options}
+        
+        _LOGGER.debug(
+            "Processing %s entry %s with keys: %s",
+            domain,
+            config_entry.entry_id,
+            list(entry_data.keys()),
+        )
 
-        host = entry_data.get("host")
+        # Get host - check multiple possible key names
+        host = (
+            entry_data.get("host")
+            or entry_data.get("address")
+            or entry_data.get("ip_address")
+            or entry_data.get("ip")
+        )
+        
+        if not host:
+            _LOGGER.debug(
+                "%s config entry %s missing host/address, available keys: %s",
+                domain,
+                config_entry.entry_id,
+                list(entry_data.keys()),
+            )
+            return None
+            
+        # Skip if already processed
+        if host in processed_hosts:
+            _LOGGER.debug("Host %s already processed, skipping", host)
+            return None
+
+        # Get credentials
         username = entry_data.get("username", "admin")
         password = entry_data.get("password", "")
-        port = entry_data.get("port", 554)
-
-        if not host:
-            _LOGGER.warning("%s config entry missing host", domain)
-            return None
+        
+        # Get RTSP port - Dahua HACS uses rtsp_port, others use port
+        # Default RTSP port is 554
+        rtsp_port = (
+            entry_data.get("rtsp_port")
+            or entry_data.get("rtsp")
+            or entry_data.get("port")
+            or 554
+        )
+        
+        # Dahua HACS has separate port (HTTP) and rtsp_port
+        # Make sure we're using the RTSP port, not HTTP port (80)
+        if rtsp_port == 80 and entry_data.get("rtsp_port"):
+            rtsp_port = entry_data.get("rtsp_port")
 
         # URL encode password
         encoded_password = quote(password, safe="")
 
         # Build RTSP URLs
         record_url = (
-            f"rtsp://{username}:{encoded_password}@{host}:{port}"
+            f"rtsp://{username}:{encoded_password}@{host}:{rtsp_port}"
             f"/cam/realmonitor?channel=1&subtype=0"
         )
         detect_url = (
-            f"rtsp://{username}:{encoded_password}@{host}:{port}"
+            f"rtsp://{username}:{encoded_password}@{host}:{rtsp_port}"
             f"/cam/realmonitor?channel=1&subtype=1"
         )
 
-        # Get friendly name
-        friendly_name = entry_data.get("name", host)
+        # Get friendly name from entry title or data
+        friendly_name = (
+            entry_data.get("name")
+            or config_entry.title
+            or host
+        )
 
         # Normalize name for Frigate
         cam_name = self.normalize_name(friendly_name)
@@ -305,10 +410,11 @@ class AmcrestAdapter(CameraAdapter):
         available = self._check_availability(entity_reg, domain)
 
         _LOGGER.debug(
-            "Created %s camera via entry: %s (host=%s)",
+            "Created %s camera via entry: %s (host=%s, rtsp_port=%s)",
             domain,
             cam_name,
             host,
+            rtsp_port,
         )
 
         return DiscoveredCamera(
