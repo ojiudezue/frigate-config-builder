@@ -1,12 +1,13 @@
 """Button entities for Frigate Config Builder.
 
-Version: 0.4.0.4
-Date: 2026-01-17
+Version: 0.4.0.5
+Date: 2026-01-18
 
 Provides:
 - Generate Config: Create a new Frigate configuration file
 - Push to Frigate: Send config to Frigate and restart
 - Refresh Cameras: Re-scan for cameras from all integrations
+- Refresh Frigate Releases: Check GitHub for latest Frigate versions
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-VERSION = "0.4.0.4"
+VERSION = "0.4.0.5"
 
 
 async def async_setup_entry(
@@ -44,6 +45,7 @@ async def async_setup_entry(
     entities = [
         FrigateConfigBuilderGenerateButton(coordinator, entry),
         FrigateConfigBuilderRefreshButton(coordinator, entry),
+        FrigateConfigBuilderRefreshReleasesButton(coordinator, entry, hass),
     ]
 
     # Only add Push button if Frigate URL is configured
@@ -240,4 +242,78 @@ class FrigateConfigBuilderRefreshButton(FrigateConfigBuilderButtonBase):
 
         except Exception as err:
             _LOGGER.error("Failed to refresh cameras: %s", err)
+            raise
+
+
+class FrigateConfigBuilderRefreshReleasesButton(ButtonEntity):
+    """Button to manually refresh Frigate releases from GitHub."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: FrigateConfigBuilderCoordinator,
+        entry: ConfigEntry,
+        hass: HomeAssistant,
+    ) -> None:
+        """Initialize the refresh releases button."""
+        self._coordinator = coordinator
+        self._entry = entry
+        self._hass = hass
+        self.entity_description = ButtonEntityDescription(
+            key="refresh_releases",
+            translation_key="refresh_releases",
+            icon="mdi:github",
+            entity_category=EntityCategory.CONFIG,
+        )
+        self._attr_unique_id = f"{entry.entry_id}_refresh_releases"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name="Frigate Config Builder",
+            manufacturer="Community",
+            model="Config Builder",
+            sw_version=VERSION,
+        )
+
+    async def async_press(self) -> None:
+        """Refresh Frigate releases from GitHub."""
+        _LOGGER.info("Refresh Frigate Releases button pressed")
+
+        # Get the releases sensor from hass.data
+        sensor_key = f"{self._entry.entry_id}_releases_sensor"
+        releases_sensor = self._hass.data[DOMAIN].get(sensor_key)
+
+        if releases_sensor is None:
+            _LOGGER.error("Frigate releases sensor not found")
+            return
+
+        try:
+            # Force refresh bypassing the poll interval
+            await releases_sensor.async_force_refresh()
+
+            self._hass.bus.async_fire(
+                f"{DOMAIN}_releases_refreshed",
+                {
+                    "entry_id": self._entry.entry_id,
+                    "latest_stable": releases_sensor._latest_stable,
+                    "latest_beta": releases_sensor._latest_beta,
+                },
+            )
+
+            _LOGGER.info(
+                "Refreshed Frigate releases: stable=%s, beta=%s",
+                releases_sensor._latest_stable,
+                releases_sensor._latest_beta,
+            )
+
+        except Exception as err:
+            _LOGGER.error("Failed to refresh Frigate releases: %s", err)
+            self._hass.bus.async_fire(
+                f"{DOMAIN}_error",
+                {"error": str(err), "action": "refresh_releases"},
+            )
             raise

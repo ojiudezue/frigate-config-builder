@@ -200,6 +200,9 @@
       },
       "refresh_cameras": {
         "name": "Refresh Cameras"
+      },
+      "refresh_releases": {
+        "name": "Check Frigate Updates"
       }
     },
     "sensor": {

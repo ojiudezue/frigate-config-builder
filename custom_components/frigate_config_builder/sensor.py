@@ -17,8 +17,6 @@ from datetime import datetime, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
-import aiohttp
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -26,6 +24,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import EntityCategory
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -33,6 +32,8 @@ from homeassistant.util import dt as dt_util
 from .const import CONF_FRIGATE_URL, CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION, DOMAIN
 
 if TYPE_CHECKING:
+    from aiohttp import ClientSession
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -46,7 +47,7 @@ VERSION = "0.4.0.5"
 # How often to poll Frigate status
 FRIGATE_POLL_INTERVAL = timedelta(minutes=5)
 
-# How often to check for Frigate releases (once per day)
+# How often to auto-check for Frigate releases (once per day)
 FRIGATE_RELEASES_POLL_INTERVAL = timedelta(hours=24)
 
 # GitHub API endpoint for Frigate releases
@@ -61,17 +62,23 @@ async def async_setup_entry(
     """Set up sensor entities from a config entry."""
     coordinator: FrigateConfigBuilderCoordinator = hass.data[DOMAIN][entry.entry_id]
 
+    # Create releases sensor and store reference for button access
+    releases_sensor = FrigateReleasesSensor(coordinator, entry, hass)
+
     entities: list[SensorEntity] = [
         CamerasSelectedSensor(coordinator, entry),
         CamerasFoundSensor(coordinator, entry),
         LastGeneratedSensor(coordinator, entry),
         DiscoveryStatusSensor(coordinator, entry),
-        FrigateReleasesSensor(coordinator, entry),
+        releases_sensor,
     ]
+
+    # Store releases sensor reference in hass.data for button to access
+    hass.data[DOMAIN][f"{entry.entry_id}_releases_sensor"] = releases_sensor
 
     # Add Frigate status sensor if URL is configured
     if entry.data.get(CONF_FRIGATE_URL):
-        entities.append(FrigateStatusSensor(coordinator, entry))
+        entities.append(FrigateStatusSensor(coordinator, entry, hass))
 
     async_add_entities(entities)
 
@@ -303,6 +310,7 @@ class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
         self,
         coordinator: FrigateConfigBuilderCoordinator,
         entry: ConfigEntry,
+        hass: HomeAssistant,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(
@@ -315,6 +323,7 @@ class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
                 entity_category=EntityCategory.DIAGNOSTIC,
             ),
         )
+        self._hass = hass
         self._frigate_version: str | None = None
         self._frigate_uptime: str | None = None
         self._frigate_connected: bool = False
@@ -358,48 +367,37 @@ class FrigateStatusSensor(FrigateConfigBuilderBaseSensor):
             return
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{frigate_url.rstrip('/')}/api/stats",
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        self._frigate_version = data.get("service", {}).get("version")
-                        uptime_seconds = data.get("service", {}).get("uptime")
-                        if uptime_seconds:
-                            # Format uptime as human-readable
-                            hours, remainder = divmod(int(uptime_seconds), 3600)
-                            minutes, seconds = divmod(remainder, 60)
-                            if hours > 24:
-                                days = hours // 24
-                                hours = hours % 24
-                                self._frigate_uptime = f"{days}d {hours}h {minutes}m"
-                            else:
-                                self._frigate_uptime = f"{hours}h {minutes}m {seconds}s"
-                        self._frigate_connected = True
-                        self._last_error = None
-                        _LOGGER.debug(
-                            "Frigate status: connected, version %s",
-                            self._frigate_version,
-                        )
-                    else:
-                        self._frigate_connected = False
-                        self._last_error = f"HTTP {response.status}"
-                        _LOGGER.warning(
-                            "Frigate API returned status %d", response.status
-                        )
-
-        except aiohttp.ClientConnectorError as err:
-            self._frigate_connected = False
-            self._frigate_version = None
-            self._last_error = "Connection refused"
-            _LOGGER.debug("Could not connect to Frigate: %s", err)
-
-        except TimeoutError:
-            self._frigate_connected = False
-            self._last_error = "Timeout"
-            _LOGGER.debug("Frigate connection timed out")
+            session = async_get_clientsession(self._hass)
+            async with session.get(
+                f"{frigate_url.rstrip('/')}/api/stats",
+                timeout=10,
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    self._frigate_version = data.get("service", {}).get("version")
+                    uptime_seconds = data.get("service", {}).get("uptime")
+                    if uptime_seconds:
+                        # Format uptime as human-readable
+                        hours, remainder = divmod(int(uptime_seconds), 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        if hours > 24:
+                            days = hours // 24
+                            hours = hours % 24
+                            self._frigate_uptime = f"{days}d {hours}h {minutes}m"
+                        else:
+                            self._frigate_uptime = f"{hours}h {minutes}m {seconds}s"
+                    self._frigate_connected = True
+                    self._last_error = None
+                    _LOGGER.debug(
+                        "Frigate status: connected, version %s",
+                        self._frigate_version,
+                    )
+                else:
+                    self._frigate_connected = False
+                    self._last_error = f"HTTP {response.status}"
+                    _LOGGER.warning(
+                        "Frigate API returned status %d", response.status
+                    )
 
         except Exception as err:
             self._frigate_connected = False
@@ -414,7 +412,7 @@ class FrigateReleasesSensor(FrigateConfigBuilderBaseSensor):
     """Sensor showing latest Frigate releases from GitHub.
 
     Polls GitHub API to get the latest stable and beta releases.
-    Updates once per day to respect API rate limits.
+    Updates once per day automatically, or on-demand via button.
     """
 
     # Enable polling for this sensor
@@ -424,6 +422,7 @@ class FrigateReleasesSensor(FrigateConfigBuilderBaseSensor):
         self,
         coordinator: FrigateConfigBuilderCoordinator,
         entry: ConfigEntry,
+        hass: HomeAssistant,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(
@@ -436,6 +435,7 @@ class FrigateReleasesSensor(FrigateConfigBuilderBaseSensor):
                 entity_category=EntityCategory.DIAGNOSTIC,
             ),
         )
+        self._hass = hass
         self._latest_stable: str | None = None
         self._latest_beta: str | None = None
         self._stable_date: str | None = None
@@ -496,57 +496,58 @@ class FrigateReleasesSensor(FrigateConfigBuilderBaseSensor):
         }
 
     async def async_update(self) -> None:
-        """Fetch latest releases from GitHub API."""
+        """Fetch latest releases from GitHub API (respects poll interval)."""
         # Only check once per day (or on first load)
         if self._last_check:
             time_since_check = dt_util.utcnow() - self._last_check
             if time_since_check < FRIGATE_RELEASES_POLL_INTERVAL:
                 return
 
+        await self.async_force_refresh()
+
+    async def async_force_refresh(self) -> None:
+        """Force refresh releases from GitHub API (bypasses poll interval)."""
+        _LOGGER.debug("Fetching Frigate releases from GitHub")
+
         try:
+            session = async_get_clientsession(self._hass)
             headers = {
                 "Accept": "application/vnd.github.v3+json",
                 "User-Agent": "FrigateConfigBuilder-HomeAssistant",
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    FRIGATE_RELEASES_URL,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as response:
-                    if response.status == 200:
-                        releases = await response.json()
-                        self._parse_releases(releases)
-                        self._last_error = None
-                        _LOGGER.debug(
-                            "Frigate releases: stable=%s, beta=%s",
-                            self._latest_stable,
-                            self._latest_beta,
-                        )
-                    elif response.status == 403:
-                        # Rate limited
-                        self._last_error = "GitHub API rate limited"
-                        _LOGGER.warning("GitHub API rate limited for Frigate releases")
-                    else:
-                        self._last_error = f"HTTP {response.status}"
-                        _LOGGER.warning(
-                            "GitHub API returned status %d", response.status
-                        )
-
-        except aiohttp.ClientConnectorError as err:
-            self._last_error = "Connection failed"
-            _LOGGER.debug("Could not connect to GitHub: %s", err)
-
-        except TimeoutError:
-            self._last_error = "Timeout"
-            _LOGGER.debug("GitHub connection timed out")
+            async with session.get(
+                FRIGATE_RELEASES_URL,
+                headers=headers,
+                timeout=15,
+            ) as response:
+                if response.status == 200:
+                    releases = await response.json()
+                    self._parse_releases(releases)
+                    self._last_error = None
+                    _LOGGER.info(
+                        "Frigate releases updated: stable=%s, beta=%s",
+                        self._latest_stable,
+                        self._latest_beta,
+                    )
+                elif response.status == 403:
+                    # Rate limited
+                    self._last_error = "GitHub API rate limited"
+                    _LOGGER.warning("GitHub API rate limited for Frigate releases")
+                else:
+                    self._last_error = f"HTTP {response.status}"
+                    _LOGGER.warning(
+                        "GitHub API returned status %d", response.status
+                    )
 
         except Exception as err:
             self._last_error = str(err)
             _LOGGER.debug("Could not fetch Frigate releases: %s", err)
 
         self._last_check = dt_util.utcnow()
+        
+        # Trigger state update
+        self.async_write_ha_state()
 
     def _parse_releases(self, releases: list[dict[str, Any]]) -> None:
         """Parse GitHub releases to find stable and beta versions."""
