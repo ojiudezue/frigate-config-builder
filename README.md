@@ -28,31 +28,27 @@ Before installing Frigate Config Builder, you need:
 
 ---
 
-## 🆕 What's New in v0.4.0.5
+## 🆕 What's New in v0.4.0.7
 
-### Frigate 0.17 Support
+### Frigate 0.16 as Stable Baseline
 
-This release adds full support for Frigate 0.17's new features:
+This release updates to **Frigate 0.16** as the stable baseline:
 
-| Feature | Description |
-|---------|-------------|
-| **Version Selection** | Choose between Frigate 0.14.x (stable) or 0.17.x (latest) in setup |
-| **GenAI Integration** | Configure AI-powered event descriptions using Ollama, Gemini, OpenAI, or Azure |
-| **YOLOv9 Detector** | New detector option for Frigate 0.17+ |
-| **Improved LPR** | 0.17's "small" model now outperforms the old "large" model |
-| **Tiered Retention** | 0.17's new retention structure (alerts/detections separate from motion) |
-| **Release Tracking** | New sensor shows latest Frigate stable and beta releases |
-| **Parallel Discovery** | Cameras from all integrations discovered simultaneously (faster!) |
+| Change | Description |
+|--------|-------------|
+| **Default Version** | Now 0.16 (was 0.14) |
+| **TensorRT Removed** | Use ONNX for Nvidia GPUs |
+| **Detection Default** | 0.16+ disables detection by default - we always enable it |
+| **Audio Codec** | go2rtc accepts any audio codec in 0.16+ |
+| **Record Presets** | Updated to use `preset-record-generic-audio-aac` |
 
-### New Camera Support
+### HACS Integration Discovery Fix
 
-- **Dahua Cameras** - Now discovered alongside Amcrest (same protocol)
-- **Generic RTSP** - Any camera added via HA's Generic Camera integration
+Fixed camera discovery for HACS custom integrations:
+- **Amcrest Custom** (bcpearce/HomeAssistant-Amcrest-Custom)
+- **Dahua** (rroller/dahua)
 
-### New Entities
-
-- **Frigate Releases Sensor** - Shows latest stable/beta versions from GitHub
-- **Check Updates Button** - Manually refresh Frigate release info
+Both use different config entry keys (`address` vs `host`, `rtsp_port` vs `port`).
 
 ---
 
@@ -76,7 +72,7 @@ Setting up Frigate is powerful but tedious. For each camera you need to:
 You just installed Frigate and have 8 cameras across UniFi Protect, Reolink, and an old Amcrest. Instead of spending hours researching RTSP URLs and YAML syntax:
 
 1. Install this integration
-2. Walk through the 5-step wizard (now with Frigate version selection!)
+2. Walk through the 5-step wizard
 3. Click "Generate Config"
 4. Copy the file to Frigate
 
@@ -125,7 +121,7 @@ Want AI-generated descriptions of security events? Enable GenAI in the features 
 ```yaml
 genai:
   enabled: true
-  provider: ollama  # Or gemini, openai, azure_openai
+  provider: ollama
   model: llava
 ```
 
@@ -154,8 +150,8 @@ automation:
 |-------------|--------|-------|
 | **UniFi Protect** | ✅ Full support | All cameras, doorbells, package cameras. **Requires [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source)** |
 | **Reolink** | ✅ Full support | Including multi-lens cameras like TrackMix |
-| **Amcrest** | ✅ Full support | All RTSP-capable models |
-| **Dahua** | ✅ Full support | Same protocol as Amcrest |
+| **Amcrest** | ✅ Full support | Core HA integration + HACS Custom integration |
+| **Dahua** | ✅ Full support | Core HA + HACS rroller/dahua integration |
 | **Generic RTSP** | ✅ Full support | Any camera added via HA's Generic Camera integration |
 | **Manual** | ✅ Full support | User-defined RTSP URLs via options |
 
@@ -165,17 +161,27 @@ automation:
 
 | Frigate Version | Support Level | Notes |
 |-----------------|---------------|-------|
-| **0.14.x** | ✅ Full support | Stable release, recommended for production |
+| **0.16.x** | ✅ Full support | **Current stable** - recommended for production |
 | **0.17.x** | ✅ Full support | Latest features: GenAI, YOLOv9, tiered retention |
+
+### Key Changes in Frigate 0.16
+
+If you were using 0.14, be aware of these 0.16 changes (handled automatically by this integration):
+
+1. **Detection disabled by default** - Must explicitly set `detect: enabled: true`
+2. **TensorRT removed** - Use ONNX detector for Nvidia GPUs
+3. **ROCm MIGraphX removed** - Use ONNX detector for AMD GPUs
+4. **Audio codec flexibility** - go2rtc now accepts any audio codec
+5. **HA Add-on config location** - Moved from `/config/frigate.yml` to `/addon_configs/`
 
 ### Breaking Changes in Frigate 0.17
 
-If upgrading from 0.14 to 0.17, be aware of these changes:
+If upgrading from 0.16 to 0.17:
 
-1. **Retention Structure** - Recording retention is now fully tiered (alerts/detections separate from motion)
-2. **GenAI Config** - Global config only configures provider; object-specific settings moved to per-camera config
+1. **Retention Structure** - Recording retention is now fully tiered (alerts/detections separate)
+2. **GenAI Config** - Global config only configures provider; object settings moved per-camera
 3. **LPR Model** - The "small" model in 0.17 outperforms the old "large" model
-4. **strftime_fmt** - Fully removed in 0.17
+4. **strftime_fmt** - Deprecated in 0.16, fully removed in 0.17
 
 The integration handles these differences automatically when you select your Frigate version.
 
@@ -226,8 +232,8 @@ The wizard guides you through:
 
 | Step | What You'll Configure |
 |------|----------------------|
-| **Version & Output** | Frigate version (0.14/0.17), where to write frigate.yml, optional API connection |
-| **Hardware** | Coral TPU (or YOLOv9 for 0.17), GPU acceleration, network interfaces |
+| **Version & Output** | Frigate version (0.16/0.17), where to write frigate.yml, optional API connection |
+| **Hardware** | Detector (Coral, ONNX, CPU), GPU acceleration, network interfaces |
 | **MQTT** | Auto-detected from Home Assistant or manual entry |
 | **Features** | Face recognition, license plates, audio detection, GenAI (0.17+), etc. |
 | **GenAI** | (0.17+ only) Provider selection, API keys for cloud services |
@@ -269,38 +275,6 @@ Your config is saved to the path you specified (default: `/config/www/frigate.ym
 | `sensor.frigate_releases` | Sensor | Latest stable/beta Frigate releases from GitHub |
 | `binary_sensor.config_needs_update` | Binary Sensor | ON when cameras changed |
 
-### Frigate Releases Sensor
-
-The releases sensor polls GitHub daily (or on-demand via button) and provides:
-
-- **State**: Latest stable Frigate version
-- **Attributes**:
-  - `latest_stable` - Current stable release (e.g., "0.14.1")
-  - `latest_beta` - Current beta/RC release (e.g., "0.17.0-beta1")
-  - `stable_release_date` - When stable was released
-  - `beta_release_date` - When beta was released
-  - `configured_version` - Your configured Frigate version
-  - `update_available` - True if a newer version exists
-  - `recent_releases` - Last 5 releases
-
-**Example Automation - Notify on New Frigate Release:**
-
-```yaml
-automation:
-  - alias: "Notify on new Frigate release"
-    trigger:
-      - platform: state
-        entity_id: sensor.frigate_config_builder_frigate_releases
-    condition:
-      - condition: template
-        value_template: "{{ trigger.from_state.state != trigger.to_state.state }}"
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "New Frigate Release"
-          message: "Frigate {{ states('sensor.frigate_config_builder_frigate_releases') }} is available!"
-```
-
 ---
 
 ## Services
@@ -330,75 +304,44 @@ service: frigate_config_builder.refresh_cameras
 
 ---
 
-## Example Automations
-
-### Notify When New Cameras Found
-
-```yaml
-automation:
-  - alias: "New camera discovered"
-    trigger:
-      - platform: event
-        event_type: frigate_config_builder_cameras_refreshed
-    condition:
-      - condition: template
-        value_template: "{{ trigger.event.data.new_cameras | length > 0 }}"
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "New Camera Found"
-          message: "{{ trigger.event.data.new_cameras | join(', ') }}"
-```
-
-### Weekly Config Regeneration
-
-```yaml
-automation:
-  - alias: "Weekly Frigate config update"
-    trigger:
-      - platform: time
-        at: "03:00:00"
-    condition:
-      - condition: time
-        weekday: sun
-    action:
-      - service: frigate_config_builder.generate
-        data:
-          push: true
-```
-
-### Dashboard Button Card
-
-```yaml
-type: button
-name: Generate Frigate Config
-icon: mdi:file-cog
-tap_action:
-  action: call-service
-  service: frigate_config_builder.generate
-  data:
-    push: false
-```
-
----
-
 ## Generated Config Example
 
-### Frigate 0.14.x Config
+### Frigate 0.16.x Config
 
 ```yaml
 mqtt:
-  enabled: true
   host: 192.168.1.10
   port: 1883
+  user: mqtt_user
+  password: mqtt_pass
 
 detectors:
-  coral:
+  default:
     type: edgetpu
     device: usb
 
 ffmpeg:
   hwaccel_args: preset-vaapi
+
+detect:
+  enabled: true
+  width: 640
+  height: 360
+  fps: 5
+
+record:
+  enabled: true
+  retain:
+    days: 7
+    mode: motion
+  alerts:
+    retain:
+      days: 30
+      mode: motion
+  detections:
+    retain:
+      days: 30
+      mode: motion
 
 go2rtc:
   streams:
@@ -413,30 +356,28 @@ cameras:
         - path: rtsp://127.0.0.1:8554/front_door
           roles: [detect]
         - path: rtsp://192.168.1.1:7441/...
-          roles: [record]
+          roles: [record, audio]
+      hwaccel_args: preset-vaapi
+      output_args:
+        record: preset-record-generic-audio-aac
     detect:
+      enabled: true
       width: 1280
       height: 720
-    record:
-      enabled: true
-      retain:
-        days: 7
-        mode: motion
-      events:
-        retain:
-          default: 30
+      fps: 5
+
+version: "0.16-1"
 ```
 
 ### Frigate 0.17.x Config (with GenAI)
 
 ```yaml
 mqtt:
-  enabled: true
   host: 192.168.1.10
   port: 1883
 
 detectors:
-  coral:
+  default:
     type: edgetpu
     device: usb
 
@@ -448,6 +389,24 @@ genai:
 ffmpeg:
   hwaccel_args: preset-vaapi
 
+detect:
+  enabled: true
+  width: 640
+  height: 360
+  fps: 5
+
+record:
+  enabled: true
+  retain:
+    days: 7
+    mode: motion
+  alerts:
+    retain:
+      days: 30
+  detections:
+    retain:
+      days: 30
+
 go2rtc:
   streams:
     front_door:
@@ -461,20 +420,14 @@ cameras:
         - path: rtsp://127.0.0.1:8554/front_door
           roles: [detect]
         - path: rtsp://192.168.1.1:7441/...
-          roles: [record]
+          roles: [record, audio]
     detect:
+      enabled: true
       width: 1280
       height: 720
-    record:
-      enabled: true
-      retain:
-        days: 1
-      alerts:
-        retain:
-          days: 30
-      detections:
-        retain:
-          days: 30
+      fps: 5
+
+version: "0.16-1"
 ```
 
 ---
@@ -485,9 +438,9 @@ cameras:
 
 | Camera Type | Solution |
 |-------------|----------|
-| **UniFi Protect** | Install [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) from HACS - **this is required** |
+| **UniFi Protect** | Install [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) from HACS - **required** |
 | **Reolink** | Ensure the Reolink integration is configured in Home Assistant |
-| **Amcrest/Dahua** | Ensure the Amcrest integration is configured in Home Assistant |
+| **Amcrest/Dahua** | Ensure the Amcrest or Dahua integration is configured. Works with both core HA and HACS custom integrations. |
 | **Generic RTSP** | Add camera via Settings → Devices → Add Integration → Generic Camera |
 | **All cameras** | Check that camera entities aren't disabled in Home Assistant |
 
@@ -526,9 +479,9 @@ This is the most common issue. UniFi Protect integration doesn't expose RTSP URL
 | Requirement | Required? | Notes |
 |-------------|-----------|-------|
 | Home Assistant | ✅ Yes | 2024.1.0 or newer |
-| Frigate NVR | ✅ Yes | 0.14.x or 0.17.x |
+| Frigate NVR | ✅ Yes | 0.16.x (stable) or 0.17.x (latest) |
 | expose-camera-stream-source | ⚠️ For UniFi | Required to discover UniFi Protect cameras |
-| Camera integrations | ⚠️ Varies | Reolink, Amcrest, etc. as needed |
+| Camera integrations | ⚠️ Varies | Reolink, Amcrest, Dahua, etc. as needed |
 
 ---
 
@@ -548,18 +501,29 @@ Camera adapters live in `discovery/`. See `discovery/base.py` for the interface.
 
 ## Changelog
 
+### v0.4.0.7 (2026-01-19)
+- 🔄 Updated to Frigate 0.16 as stable baseline (was 0.14)
+- 🔧 TensorRT detector removed - use ONNX for Nvidia GPUs
+- 🔧 Updated record presets to use `preset-record-generic-audio-aac`
+- 🔧 Version-aware config generation for 0.16 vs 0.17
+- 📝 Updated documentation for 0.16 changes
+
+### v0.4.0.6 (2026-01-19)
+- 🐛 Fixed HACS integration discovery for Amcrest Custom and Dahua
+- 🔧 Handle `address` config key (Dahua HACS)
+- 🔧 Distinguish `rtsp_port` from HTTP `port`
+- 📝 Added debug logging for camera discovery
+
 ### v0.4.0.5 (2026-01-18)
 - ✨ Added Frigate 0.17 support
 - ✨ New Frigate version selection in setup wizard
 - ✨ GenAI configuration (Ollama, Gemini, OpenAI, Azure)
 - ✨ YOLOv9 detector option for 0.17+
-- ✨ Improved LPR model defaults (0.17's "small" > 0.14's "large")
-- ✨ New Frigate Releases sensor - tracks latest stable/beta versions
-- ✨ Check Frigate Updates button - manual refresh from GitHub
-- ✨ Dahua camera support (same protocol as Amcrest)
+- ✨ Improved LPR model defaults
+- ✨ New Frigate Releases sensor
+- ✨ Dahua camera support
 - ✨ Generic RTSP camera discovery
-- ⚡ Parallel camera discovery (all adapters run simultaneously)
-- 🔧 Version-aware config generation
+- ⚡ Parallel camera discovery
 
 ### v0.4.0.4 (2026-01-17)
 - 🐛 Fixed Reolink camera detection delay

@@ -1,9 +1,11 @@
 """Config flow for Frigate Config Builder.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.7
+Date: 2026-01-19
 
 Changelog:
+- 0.4.0.7: Updated to Frigate 0.16 as stable baseline
+- 0.4.0.6: Fixed HACS integration discovery for Amcrest Custom and Dahua
 - 0.4.0.5: Added Frigate version selection (0.14/0.17), GenAI config, YOLOv9 detector
 - 0.4.0.4: Options flow camera selection improvements
 - 0.4.0.3: Options flow now has multiple steps for editing connection, features, retention
@@ -77,7 +79,7 @@ from .const import (
     DEFAULT_FRIGATE_VERSION,
     DEFAULT_GENAI_PROVIDER,
     DEFAULT_HWACCEL,
-    DEFAULT_LPR_MODEL_014,
+    DEFAULT_LPR_MODEL_016,
     DEFAULT_LPR_MODEL_017,
     DEFAULT_MODEL_SIZE,
     DEFAULT_MQTT_PORT,
@@ -87,7 +89,7 @@ from .const import (
     DEFAULT_RETAIN_DETECTIONS,
     DEFAULT_RETAIN_MOTION,
     DEFAULT_RETAIN_SNAPSHOTS,
-    DETECTOR_TYPES_014,
+    DETECTOR_TYPES_016,
     DETECTOR_TYPES_017,
     DOMAIN,
     FRIGATE_VERSIONS,
@@ -109,14 +111,14 @@ def get_detector_types_for_version(frigate_version: str) -> list[str]:
     """Get detector types available for a Frigate version."""
     if frigate_version == "0.17":
         return DETECTOR_TYPES_017
-    return DETECTOR_TYPES_014
+    return DETECTOR_TYPES_016
 
 
 def get_default_lpr_model(frigate_version: str) -> str:
     """Get default LPR model for a Frigate version."""
     if frigate_version == "0.17":
         return DEFAULT_LPR_MODEL_017
-    return DEFAULT_LPR_MODEL_014
+    return DEFAULT_LPR_MODEL_016
 
 
 class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -157,7 +159,7 @@ class FrigateConfigBuilderConfigFlow(ConfigFlow, domain=DOMAIN):
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=[
-                                {"value": "0.14", "label": "Frigate 0.14.x (Stable)"},
+                                {"value": "0.16", "label": "Frigate 0.16.x (Stable)"},
                                 {"value": "0.17", "label": "Frigate 0.17.x (Latest)"},
                             ],
                             mode=SelectSelectorMode.DROPDOWN,
@@ -734,7 +736,7 @@ class FrigateConfigBuilderOptionsFlow(OptionsFlow):
                     ): SelectSelector(
                         SelectSelectorConfig(
                             options=[
-                                {"value": "0.14", "label": "Frigate 0.14.x (Stable)"},
+                                {"value": "0.16", "label": "Frigate 0.16.x (Stable)"},
                                 {"value": "0.17", "label": "Frigate 0.17.x (Latest)"},
                             ],
                             mode=SelectSelectorMode.DROPDOWN,

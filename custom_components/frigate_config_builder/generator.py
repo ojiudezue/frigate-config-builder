@@ -1,4 +1,21 @@
-"""Frigate configuration generator."""
+"""Frigate configuration generator.
+
+Version: 0.4.0.7
+Date: 2026-01-19
+
+Generates Frigate NVR configuration files optimized for the selected Frigate version.
+
+Supported versions:
+- 0.16.x (stable): Current stable release
+- 0.17.x (latest): Beta/latest with GenAI, tiered retention
+
+Key version differences handled:
+- 0.16+: detect.enabled defaults to false (we always set true)
+- 0.16+: TensorRT removed, use ONNX for Nvidia
+- 0.16+: go2rtc accepts any audio codec
+- 0.17+: Tiered retention (alerts/detections separate from motion)
+- 0.17+: GenAI config at global level only configures provider
+"""
 from __future__ import annotations
 
 import logging
@@ -15,6 +32,12 @@ from .const import (
     CONF_DETECTOR_TYPE,
     CONF_FACE_RECOGNITION,
     CONF_FACE_RECOGNITION_MODEL,
+    CONF_FRIGATE_VERSION,
+    CONF_GENAI_API_KEY,
+    CONF_GENAI_BASE_URL,
+    CONF_GENAI_ENABLED,
+    CONF_GENAI_MODEL,
+    CONF_GENAI_PROVIDER,
     CONF_HWACCEL,
     CONF_LPR,
     CONF_MQTT_AUTO,
@@ -32,6 +55,8 @@ from .const import (
     DEFAULT_BIRDSEYE_MODE,
     DEFAULT_DETECTOR_DEVICE,
     DEFAULT_DETECTOR_TYPE,
+    DEFAULT_FRIGATE_VERSION,
+    DEFAULT_GENAI_PROVIDER,
     DEFAULT_HWACCEL,
     DEFAULT_MODEL_SIZE,
     DEFAULT_MQTT_PORT,
@@ -42,6 +67,7 @@ from .const import (
     DEFAULT_RETAIN_SNAPSHOTS,
     FFMPEG_HWACCEL_PRESETS,
     FRIGATE_CONFIG_VERSION,
+    FrigateVersion,
     RECORD_PRESETS,
 )
 
@@ -63,6 +89,14 @@ class FrigateConfigGenerator:
         self.entry = entry
         self._data = entry.data
         self._options = entry.options
+        self._frigate_version = self._data.get(
+            CONF_FRIGATE_VERSION, DEFAULT_FRIGATE_VERSION
+        )
+
+    @property
+    def is_017_or_later(self) -> bool:
+        """Check if configured for Frigate 0.17 or later."""
+        return self._frigate_version >= FrigateVersion.V017.value
 
     async def generate(self, cameras: list[DiscoveredCamera] | None = None) -> str:
         """Generate complete Frigate configuration.
@@ -82,7 +116,11 @@ class FrigateConfigGenerator:
         config["mqtt"] = await self._build_mqtt()
         config["detectors"] = self._build_detectors()
         config["ffmpeg"] = self._build_ffmpeg()
+
+        # CRITICAL for Frigate 0.16+: detect.enabled defaults to false
+        # We MUST explicitly enable detection at the global level
         config["detect"] = self._build_detect()
+
         config["record"] = self._build_record()
         config["snapshots"] = self._build_snapshots()
 
@@ -107,6 +145,10 @@ class FrigateConfigGenerator:
         if self._data.get(CONF_BIRD_CLASSIFICATION, False):
             config["classification"] = {"bird": {"enabled": True}}
 
+        # GenAI (Frigate 0.17+ only)
+        if self.is_017_or_later and self._data.get(CONF_GENAI_ENABLED, False):
+            config["genai"] = self._build_genai()
+
         # go2rtc streams
         if cameras:
             config["go2rtc"] = self._build_go2rtc(cameras)
@@ -124,7 +166,7 @@ class FrigateConfigGenerator:
         # Telemetry
         config["telemetry"] = self._build_telemetry()
 
-        # Version
+        # Version marker for generated config
         config["version"] = FRIGATE_CONFIG_VERSION
 
         # Generate YAML with custom representer for clean output
@@ -194,7 +236,10 @@ class FrigateConfigGenerator:
         }
 
     def _build_detectors(self) -> dict[str, Any]:
-        """Build detectors configuration section."""
+        """Build detectors configuration section.
+
+        Note: TensorRT was removed in Frigate 0.16 - use ONNX for Nvidia GPUs.
+        """
         detector_type = self._data.get(CONF_DETECTOR_TYPE, DEFAULT_DETECTOR_TYPE)
         detector_device = self._data.get(CONF_DETECTOR_DEVICE, DEFAULT_DETECTOR_DEVICE)
 
@@ -215,7 +260,11 @@ class FrigateConfigGenerator:
         }
 
     def _build_detect(self) -> dict[str, Any]:
-        """Build default detect configuration section."""
+        """Build default detect configuration section.
+
+        CRITICAL: In Frigate 0.16+, detection is DISABLED by default.
+        We must explicitly set enabled: true for detection to work.
+        """
         return {
             "enabled": True,
             "width": 640,
@@ -224,36 +273,65 @@ class FrigateConfigGenerator:
         }
 
     def _build_record(self) -> dict[str, Any]:
-        """Build record configuration section."""
+        """Build record configuration section.
+
+        Frigate 0.17 introduced fully tiered retention:
+        - record.retain: base retention for all recordings
+        - record.alerts.retain: retention for alert recordings
+        - record.detections.retain: retention for detection recordings
+
+        For 0.16, we use the older structure but it's forward-compatible.
+        """
         retain_alerts = self._data.get(CONF_RETAIN_ALERTS, DEFAULT_RETAIN_ALERTS)
         retain_detections = self._data.get(CONF_RETAIN_DETECTIONS, DEFAULT_RETAIN_DETECTIONS)
         retain_motion = self._data.get(CONF_RETAIN_MOTION, DEFAULT_RETAIN_MOTION)
 
-        return {
-            "enabled": True,
-            "retain": {
-                "days": 0,  # Don't retain all recordings
-                "mode": "motion",
-            },
-            "alerts": {
+        if self.is_017_or_later:
+            # Frigate 0.17+ tiered retention structure
+            return {
+                "enabled": True,
                 "retain": {
-                    "days": retain_alerts,
+                    "days": retain_motion,
                     "mode": "motion",
-                }
-            },
-            "detections": {
+                },
+                "alerts": {
+                    "retain": {
+                        "days": retain_alerts,
+                    }
+                },
+                "detections": {
+                    "retain": {
+                        "days": retain_detections,
+                    }
+                },
+            }
+        else:
+            # Frigate 0.16 structure
+            return {
+                "enabled": True,
                 "retain": {
-                    "days": retain_detections,
+                    "days": retain_motion,
                     "mode": "motion",
-                }
-            },
-            "events": {
-                "retain": {
-                    "default": retain_motion,
-                    "mode": "motion",
-                }
-            },
-        }
+                },
+                "alerts": {
+                    "retain": {
+                        "days": retain_alerts,
+                        "mode": "motion",
+                    }
+                },
+                "detections": {
+                    "retain": {
+                        "days": retain_detections,
+                        "mode": "motion",
+                    }
+                },
+                "events": {
+                    "retain": {
+                        "default": retain_motion,
+                        "mode": "motion",
+                    }
+                },
+            }
 
     def _build_snapshots(self) -> dict[str, Any]:
         """Build snapshots configuration section."""
@@ -311,6 +389,34 @@ class FrigateConfigGenerator:
             "model_size": model_size,
         }
 
+    def _build_genai(self) -> dict[str, Any]:
+        """Build GenAI configuration section (Frigate 0.17+ only).
+
+        In 0.17, the global genai config only configures the provider.
+        Object-specific GenAI settings (like descriptions) are configured
+        per-camera under objects -> genai.
+        """
+        provider = self._data.get(CONF_GENAI_PROVIDER, DEFAULT_GENAI_PROVIDER)
+        model = self._data.get(CONF_GENAI_MODEL)
+        api_key = self._data.get(CONF_GENAI_API_KEY)
+        base_url = self._data.get(CONF_GENAI_BASE_URL)
+
+        config: dict[str, Any] = {
+            "enabled": True,
+            "provider": provider,
+        }
+
+        if model:
+            config["model"] = model
+
+        if api_key:
+            config["api_key"] = api_key
+
+        if base_url:
+            config["base_url"] = base_url
+
+        return config
+
     def _build_telemetry(self) -> dict[str, Any]:
         """Build telemetry configuration section."""
         network_interfaces = self._data.get(CONF_NETWORK_INTERFACES, DEFAULT_NETWORK_INTERFACE)
@@ -326,7 +432,12 @@ class FrigateConfigGenerator:
         }
 
     def _build_go2rtc(self, cameras: list[DiscoveredCamera]) -> dict[str, Any]:
-        """Build go2rtc streams section."""
+        """Build go2rtc streams section.
+
+        Note: In Frigate 0.16+, go2rtc accepts any audio codec (not just AAC).
+        This makes camera setup easier but recordings may still need AAC
+        for broad playback compatibility.
+        """
         streams: dict[str, list[str]] = {}
 
         for cam in cameras:
@@ -347,6 +458,7 @@ class FrigateConfigGenerator:
                 "ffmpeg": {
                     "inputs": [],
                 },
+                # CRITICAL for Frigate 0.16+: Must explicitly enable detection
                 "detect": {
                     "enabled": True,
                     "width": cam.width,
@@ -379,8 +491,9 @@ class FrigateConfigGenerator:
             camera_config["ffmpeg"]["hwaccel_args"] = hwaccel_preset
 
             # Set record preset based on source
+            # Note: In 0.16+, use preset-record-generic-audio-aac for compatibility
             source = cam.source if isinstance(cam.source, str) else cam.source.value
-            record_preset = RECORD_PRESETS.get(source, "preset-record-generic")
+            record_preset = RECORD_PRESETS.get(source, "preset-record-generic-audio-aac")
             camera_config["ffmpeg"]["output_args"] = {"record": record_preset}
 
             result[cam.name] = camera_config

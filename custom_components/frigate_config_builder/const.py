@@ -1,9 +1,11 @@
 """Constants for Frigate Config Builder.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.7
+Date: 2026-01-19
 
 Changelog:
+- 0.4.0.7: Updated to Frigate 0.16 as stable baseline, 0.17 as latest
+- 0.4.0.6: Fixed HACS integration discovery for Amcrest Custom and Dahua
 - 0.4.0.5: Added Frigate 0.17 support (version selection, GenAI config, YOLOv9 detector)
 - 0.4.0.4: Initial multi-step config flow
 """
@@ -75,7 +77,7 @@ CONF_CREDENTIAL_OVERRIDES: Final = "credential_overrides"
 # =============================================================================
 
 DEFAULT_OUTPUT_PATH: Final = "/config/www/frigate.yml"
-DEFAULT_FRIGATE_VERSION: Final = "0.14"
+DEFAULT_FRIGATE_VERSION: Final = "0.16"
 DEFAULT_DETECTOR_TYPE: Final = "edgetpu"
 DEFAULT_DETECTOR_DEVICE: Final = "usb"
 DEFAULT_HWACCEL: Final = "vaapi"
@@ -91,7 +93,7 @@ DEFAULT_GENAI_PROVIDER: Final = "ollama"
 
 # LPR model defaults by Frigate version
 # In 0.17+, the "small" model performs better than 0.16's "large" model
-DEFAULT_LPR_MODEL_014: Final = "large"
+DEFAULT_LPR_MODEL_016: Final = "large"
 DEFAULT_LPR_MODEL_017: Final = "small"
 
 # =============================================================================
@@ -102,7 +104,7 @@ DEFAULT_LPR_MODEL_017: Final = "small"
 class FrigateVersion(StrEnum):
     """Supported Frigate versions."""
 
-    V014 = "0.14"
+    V016 = "0.16"
     V017 = "0.17"
 
 
@@ -112,8 +114,8 @@ class DetectorType(StrEnum):
     EDGETPU = "edgetpu"
     CPU = "cpu"
     OPENVINO = "openvino"
-    TENSORRT = "tensorrt"
     ONNX = "onnx"
+    ROCM = "rocm"
     # Frigate 0.17+ detector types
     YOLOV9 = "yolov9"
 
@@ -169,18 +171,19 @@ class GenAIProvider(StrEnum):
 FRIGATE_VERSIONS: Final = [e.value for e in FrigateVersion]
 
 # Detector options by Frigate version
-DETECTOR_TYPES_014: Final = [
+# Note: TensorRT was removed in 0.16 - use ONNX for Nvidia GPUs
+# Note: ROCm MIGraphX was removed in 0.16 - use ONNX for AMD GPUs
+DETECTOR_TYPES_016: Final = [
     DetectorType.EDGETPU.value,
     DetectorType.CPU.value,
     DetectorType.OPENVINO.value,
-    DetectorType.TENSORRT.value,
     DetectorType.ONNX.value,
 ]
 
-DETECTOR_TYPES_017: Final = DETECTOR_TYPES_014 + [DetectorType.YOLOV9.value]
+DETECTOR_TYPES_017: Final = DETECTOR_TYPES_016 + [DetectorType.YOLOV9.value]
 
-# For backwards compatibility
-DETECTOR_TYPES: Final = DETECTOR_TYPES_014
+# For backwards compatibility - use 0.16 as baseline
+DETECTOR_TYPES: Final = DETECTOR_TYPES_016
 
 HWACCEL_OPTIONS: Final = [
     ("vaapi", "VAAPI (Intel)"),
@@ -223,15 +226,18 @@ FFMPEG_HWACCEL_PRESETS: Final = {
 # Record Output Args Presets by Camera Source
 # =============================================================================
 
+# Note: In Frigate 0.16+, go2rtc accepts any audio codec, but recordings
+# may still need AAC transcoding for broad playback compatibility.
+# Use preset-record-generic-audio-aac if audio issues occur with audio-copy.
 RECORD_PRESETS: Final = {
     "unifiprotect": "preset-record-ubiquiti",
     "amcrest": "preset-record-generic-audio-aac",
     "reolink": "preset-record-generic-audio-aac",
-    "manual": "preset-record-generic",
+    "manual": "preset-record-generic-audio-aac",
 }
 
 # =============================================================================
 # Frigate Config Version (for generated YAML comment)
 # =============================================================================
 
-FRIGATE_CONFIG_VERSION: Final = "0.14-1"
+FRIGATE_CONFIG_VERSION: Final = "0.16-1"
