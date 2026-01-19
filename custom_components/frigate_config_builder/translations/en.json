@@ -217,6 +217,9 @@
       },
       "frigate_status": {
         "name": "Frigate Status"
+      },
+      "frigate_releases": {
+        "name": "Frigate Releases"
       }
     },
     "binary_sensor": {

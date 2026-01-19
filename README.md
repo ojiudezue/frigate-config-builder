@@ -8,6 +8,27 @@
 
 ---
 
+## 🆕 What's New in v0.4.0.5
+
+### Frigate 0.17 Support
+
+This release adds full support for Frigate 0.17's new features:
+
+| Feature | Description |
+|---------|-------------|
+| **Version Selection** | Choose between Frigate 0.14.x (stable) or 0.17.x (latest) in setup |
+| **GenAI Integration** | Configure AI-powered event descriptions using Ollama, Gemini, OpenAI, or Azure |
+| **YOLOv9 Detector** | New detector option for Frigate 0.17+ |
+| **Improved LPR** | 0.17's "small" model now outperforms the old "large" model |
+| **Tiered Retention** | 0.17's new retention structure (alerts/detections separate from motion) |
+| **Release Tracking** | New sensor shows latest Frigate stable and beta releases |
+
+### New Entities
+
+- **Frigate Releases Sensor** - Shows latest stable/beta versions from GitHub, notifies when updates are available
+
+---
+
 ## Why Use This?
 
 Setting up Frigate is powerful but tedious. For each camera you need to:
@@ -28,7 +49,7 @@ Setting up Frigate is powerful but tedious. For each camera you need to:
 You just installed Frigate and have 8 cameras across UniFi Protect, Reolink, and an old Amcrest. Instead of spending hours researching RTSP URLs and YAML syntax:
 
 1. Install this integration
-2. Walk through the 5-step wizard
+2. Walk through the 5-step wizard (now with Frigate version selection!)
 3. Click "Generate Config"
 4. Copy the file to Frigate
 
@@ -55,7 +76,7 @@ You have cameras from different manufacturers (UniFi + Reolink + generic RTSP). 
 
 This integration normalizes everything into a consistent Frigate config with proper high-res (recording) and low-res (detection) streams.
 
-### ⚡ Use Case 3: Hardware Optimization
+### ⚡ Use Case 4: Hardware Optimization
 
 You have a Coral TPU and Intel QuickSync but aren't sure how to configure them. The setup wizard asks about your hardware and generates optimized settings:
 
@@ -69,7 +90,18 @@ ffmpeg:
   hwaccel_args: preset-vaapi
 ```
 
-### 🔔 Use Case 4: Automated Config Updates
+### 🤖 Use Case 5: GenAI Event Descriptions (Frigate 0.17+)
+
+Want AI-generated descriptions of security events? Enable GenAI in the features step:
+
+```yaml
+genai:
+  enabled: true
+  provider: ollama  # Or gemini, openai, azure_openai
+  model: llava
+```
+
+### 🔔 Use Case 6: Automated Config Updates
 
 Want Frigate to always stay in sync? Create an automation:
 
@@ -96,6 +128,26 @@ automation:
 | **Reolink** | ✅ Full support | Including multi-lens cameras like TrackMix |
 | **Amcrest/Dahua** | ✅ Full support | All RTSP-capable models |
 | **Generic RTSP** | ✅ Manual entry | Any camera with RTSP URL |
+
+---
+
+## Frigate Version Compatibility
+
+| Frigate Version | Support Level | Notes |
+|-----------------|---------------|-------|
+| **0.14.x** | ✅ Full support | Stable release, recommended for production |
+| **0.17.x** | ✅ Full support | Latest features: GenAI, YOLOv9, tiered retention |
+
+### Breaking Changes in Frigate 0.17
+
+If upgrading from 0.14 to 0.17, be aware of these changes:
+
+1. **Retention Structure** - Recording retention is now fully tiered (alerts/detections separate from motion)
+2. **GenAI Config** - Global config only configures provider; object-specific settings moved to per-camera config
+3. **LPR Model** - The "small" model in 0.17 outperforms the old "large" model
+4. **strftime_fmt** - Fully removed in 0.17
+
+The integration handles these differences automatically when you select your Frigate version.
 
 ---
 
@@ -130,10 +182,11 @@ The wizard guides you through:
 
 | Step | What You'll Configure |
 |------|----------------------|
-| **Save Location** | Where to write frigate.yml, optional Frigate API connection |
-| **Hardware** | Coral TPU, GPU acceleration, network interfaces |
+| **Version & Output** | Frigate version (0.14/0.17), where to write frigate.yml, optional API connection |
+| **Hardware** | Coral TPU (or YOLOv9 for 0.17), GPU acceleration, network interfaces |
 | **MQTT** | Auto-detected from Home Assistant or manual entry |
-| **Features** | Face recognition, license plates, audio detection, etc. |
+| **Features** | Face recognition, license plates, audio detection, GenAI (0.17+), etc. |
+| **GenAI** | (0.17+ only) Provider selection, API keys for cloud services |
 | **Retention** | How long to keep recordings |
 
 ### Step 3: Select Your Cameras
@@ -168,7 +221,40 @@ Your config is saved to the path you specified (default: `/config/www/frigate.ym
 | `sensor.last_generated` | Sensor | When config was last generated |
 | `sensor.discovery_status` | Sensor | Per-adapter discovery stats |
 | `sensor.frigate_status` | Sensor | Frigate version and connection (if URL configured) |
+| `sensor.frigate_releases` | Sensor | Latest stable/beta Frigate releases from GitHub |
 | `binary_sensor.config_needs_update` | Binary Sensor | ON when cameras changed |
+
+### Frigate Releases Sensor
+
+The new releases sensor polls GitHub daily and provides:
+
+- **State**: Latest stable Frigate version
+- **Attributes**:
+  - `latest_stable` - Current stable release (e.g., "0.14.1")
+  - `latest_beta` - Current beta/RC release (e.g., "0.17.0-beta1")
+  - `stable_release_date` - When stable was released
+  - `beta_release_date` - When beta was released
+  - `configured_version` - Your configured Frigate version
+  - `update_available` - True if a newer version exists
+  - `recent_releases` - Last 5 releases
+
+**Example Automation - Notify on New Frigate Release:**
+
+```yaml
+automation:
+  - alias: "Notify on new Frigate release"
+    trigger:
+      - platform: state
+        entity_id: sensor.frigate_config_builder_frigate_releases
+    condition:
+      - condition: template
+        value_template: "{{ trigger.from_state.state != trigger.to_state.state }}"
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "New Frigate Release"
+          message: "Frigate {{ states('sensor.frigate_config_builder_frigate_releases') }} is available!"
+```
 
 ---
 
@@ -253,7 +339,7 @@ tap_action:
 
 ## Generated Config Example
 
-Here's what gets generated for a UniFi + Reolink setup:
+### Frigate 0.14.x Config
 
 ```yaml
 mqtt:
@@ -273,8 +359,6 @@ go2rtc:
   streams:
     front_door:
       - rtsp://192.168.1.1:7441/...
-    backyard:
-      - rtsp://admin:pass@192.168.1.50:554/h264Preview_01_main
 
 cameras:
   front_door:
@@ -290,16 +374,62 @@ cameras:
       height: 720
     record:
       enabled: true
+      retain:
+        days: 7
+        mode: motion
+      events:
+        retain:
+          default: 30
+```
 
-  backyard:
+### Frigate 0.17.x Config (with GenAI)
+
+```yaml
+mqtt:
+  enabled: true
+  host: 192.168.1.10
+  port: 1883
+
+detectors:
+  coral:
+    type: edgetpu
+    device: usb
+
+genai:
+  enabled: true
+  provider: ollama
+  model: llava
+
+ffmpeg:
+  hwaccel_args: preset-vaapi
+
+go2rtc:
+  streams:
+    front_door:
+      - rtsp://192.168.1.1:7441/...
+
+cameras:
+  front_door:
     enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://admin:pass@192.168.1.50:554/h264Preview_01_sub
+        - path: rtsp://127.0.0.1:8554/front_door
           roles: [detect]
-        - path: rtsp://admin:pass@192.168.1.50:554/h264Preview_01_main
+        - path: rtsp://192.168.1.1:7441/...
           roles: [record]
-    # ... etc
+    detect:
+      width: 1280
+      height: 720
+    record:
+      enabled: true
+      retain:
+        days: 1
+      alerts:
+        retain:
+          days: 30
+      detections:
+        retain:
+          days: 30
 ```
 
 ---
@@ -322,14 +452,21 @@ cameras:
 
 1. Check Frigate logs for the specific error
 2. Verify hardware acceleration matches your system
-3. Open an [issue](https://github.com/ojiudezue/frigate-config-builder/issues) with your config and error
+3. For 0.17, ensure GenAI provider/API key are correct
+4. Open an [issue](https://github.com/ojiudezue/frigate-config-builder/issues) with your config and error
+
+### GenAI not working? (0.17+)
+
+1. **Ollama**: Ensure Ollama is running and accessible from Frigate container
+2. **Cloud providers**: Verify API key is correct and has proper permissions
+3. Check Frigate logs for GenAI-related errors
 
 ---
 
 ## Requirements
 
 - Home Assistant 2024.1.0 or newer
-- Frigate NVR (any recent version)
+- Frigate NVR 0.14.x or 0.17.x
 - For UniFi Protect: [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) HACS integration
 
 ---
@@ -345,6 +482,28 @@ Contributions welcome! Please:
 ### Adding a New Camera Adapter
 
 Camera adapters live in `discovery/`. See `discovery/base.py` for the interface. A new adapter typically requires <100 lines of code.
+
+---
+
+## Changelog
+
+### v0.4.0.5 (2026-01-18)
+- ✨ Added Frigate 0.17 support
+- ✨ New Frigate version selection in setup wizard
+- ✨ GenAI configuration (Ollama, Gemini, OpenAI, Azure)
+- ✨ YOLOv9 detector option for 0.17+
+- ✨ Improved LPR model defaults (0.17's "small" > 0.14's "large")
+- ✨ New Frigate Releases sensor - tracks latest stable/beta versions
+- 🔧 Version-aware config generation
+
+### v0.4.0.4 (2026-01-17)
+- 🐛 Fixed Reolink camera detection delay
+- ✨ Multi-step options flow for editing settings
+
+### v0.4.0.0 (2026-01-15)
+- ✨ Initial release with multi-step setup wizard
+- ✨ Camera discovery for UniFi, Reolink, Amcrest
+- ✨ Hardware-optimized config generation
 
 ---
 
