@@ -8,6 +8,26 @@
 
 ---
 
+## ⚠️ Prerequisites
+
+Before installing Frigate Config Builder, you need:
+
+### Required
+
+| Dependency | Description | Link |
+|------------|-------------|------|
+| **Frigate NVR** | The NVR this tool generates configs for | [frigate.video](https://frigate.video/) |
+
+### Recommended
+
+| Dependency | Description | Link |
+|------------|-------------|------|
+| **expose-camera-stream-source** | **Required for UniFi Protect cameras.** Exposes RTSP URLs that Home Assistant normally hides. | [HACS](https://github.com/felipecrs/hass-expose-camera-stream-source) |
+
+> **📌 Important:** Without `expose-camera-stream-source`, UniFi Protect cameras will not be discovered. This is because Home Assistant's UniFi Protect integration doesn't expose RTSP stream URLs by default.
+
+---
+
 ## 🆕 What's New in v0.4.0.5
 
 ### Frigate 0.17 Support
@@ -22,10 +42,17 @@ This release adds full support for Frigate 0.17's new features:
 | **Improved LPR** | 0.17's "small" model now outperforms the old "large" model |
 | **Tiered Retention** | 0.17's new retention structure (alerts/detections separate from motion) |
 | **Release Tracking** | New sensor shows latest Frigate stable and beta releases |
+| **Parallel Discovery** | Cameras from all integrations discovered simultaneously (faster!) |
+
+### New Camera Support
+
+- **Dahua Cameras** - Now discovered alongside Amcrest (same protocol)
+- **Generic RTSP** - Any camera added via HA's Generic Camera integration
 
 ### New Entities
 
-- **Frigate Releases Sensor** - Shows latest stable/beta versions from GitHub, notifies when updates are available
+- **Frigate Releases Sensor** - Shows latest stable/beta versions from GitHub
+- **Check Updates Button** - Manually refresh Frigate release info
 
 ---
 
@@ -72,6 +99,7 @@ You have cameras from different manufacturers (UniFi + Reolink + generic RTSP). 
 
 - UniFi: `rtsps://192.168.1.1:7441/...`
 - Reolink: `rtsp://192.168.1.50:554/h264Preview_01_main`
+- Amcrest/Dahua: `rtsp://192.168.1.60/cam/realmonitor?channel=1&subtype=0`
 - Generic: `rtsp://admin:pass@192.168.1.100/stream1`
 
 This integration normalizes everything into a consistent Frigate config with proper high-res (recording) and low-res (detection) streams.
@@ -124,10 +152,12 @@ automation:
 
 | Integration | Status | Notes |
 |-------------|--------|-------|
-| **UniFi Protect** | ✅ Full support | All cameras, doorbells, package cameras |
+| **UniFi Protect** | ✅ Full support | All cameras, doorbells, package cameras. **Requires [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source)** |
 | **Reolink** | ✅ Full support | Including multi-lens cameras like TrackMix |
-| **Amcrest/Dahua** | ✅ Full support | All RTSP-capable models |
-| **Generic RTSP** | ✅ Manual entry | Any camera with RTSP URL |
+| **Amcrest** | ✅ Full support | All RTSP-capable models |
+| **Dahua** | ✅ Full support | Same protocol as Amcrest |
+| **Generic RTSP** | ✅ Full support | Any camera added via HA's Generic Camera integration |
+| **Manual** | ✅ Full support | User-defined RTSP URLs via options |
 
 ---
 
@@ -153,7 +183,21 @@ The integration handles these differences automatically when you select your Fri
 
 ## Installation
 
-### HACS (Recommended)
+### Step 1: Install Prerequisites
+
+Before installing Frigate Config Builder:
+
+1. **Install Frigate NVR** - Follow the [official Frigate documentation](https://docs.frigate.video/)
+
+2. **Install expose-camera-stream-source** (Required for UniFi Protect):
+   - Open HACS in Home Assistant
+   - Search for "expose-camera-stream-source"
+   - Click **Download**
+   - Restart Home Assistant
+
+### Step 2: Install Frigate Config Builder
+
+#### HACS (Recommended)
 
 1. Open HACS in Home Assistant
 2. Click ⋮ → **Custom repositories**
@@ -162,7 +206,7 @@ The integration handles these differences automatically when you select your Fri
 5. Click **Download**
 6. Restart Home Assistant
 
-### Manual Installation
+#### Manual Installation
 
 1. Download the [latest release](https://github.com/ojiudezue/frigate-config-builder/releases)
 2. Extract to `config/custom_components/frigate_config_builder/`
@@ -216,6 +260,7 @@ Your config is saved to the path you specified (default: `/config/www/frigate.ym
 | `button.generate_config` | Button | Create the Frigate configuration file |
 | `button.push_to_frigate` | Button | Send config to Frigate and restart (if URL configured) |
 | `button.refresh_cameras` | Button | Re-scan for new cameras |
+| `button.check_frigate_updates` | Button | Check GitHub for latest Frigate versions |
 | `sensor.cameras_selected` | Sensor | Number of cameras in your config |
 | `sensor.cameras_found` | Sensor | Total discovered cameras |
 | `sensor.last_generated` | Sensor | When config was last generated |
@@ -226,7 +271,7 @@ Your config is saved to the path you specified (default: `/config/www/frigate.ym
 
 ### Frigate Releases Sensor
 
-The new releases sensor polls GitHub daily and provides:
+The releases sensor polls GitHub daily (or on-demand via button) and provides:
 
 - **State**: Latest stable Frigate version
 - **Attributes**:
@@ -438,9 +483,22 @@ cameras:
 
 ### Cameras not discovered?
 
-1. **UniFi Protect**: Install [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) from HACS
-2. **Reolink**: Ensure the camera integration is configured in Home Assistant
-3. **All cameras**: Check that camera entities aren't disabled in Home Assistant
+| Camera Type | Solution |
+|-------------|----------|
+| **UniFi Protect** | Install [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) from HACS - **this is required** |
+| **Reolink** | Ensure the Reolink integration is configured in Home Assistant |
+| **Amcrest/Dahua** | Ensure the Amcrest integration is configured in Home Assistant |
+| **Generic RTSP** | Add camera via Settings → Devices → Add Integration → Generic Camera |
+| **All cameras** | Check that camera entities aren't disabled in Home Assistant |
+
+### UniFi Protect cameras missing?
+
+This is the most common issue. UniFi Protect integration doesn't expose RTSP URLs by default.
+
+**Solution:**
+1. Install [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) from HACS
+2. Restart Home Assistant
+3. Click "Refresh Cameras" in Frigate Config Builder
 
 ### Config won't push to Frigate?
 
@@ -463,11 +521,14 @@ cameras:
 
 ---
 
-## Requirements
+## Requirements Summary
 
-- Home Assistant 2024.1.0 or newer
-- Frigate NVR 0.14.x or 0.17.x
-- For UniFi Protect: [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) HACS integration
+| Requirement | Required? | Notes |
+|-------------|-----------|-------|
+| Home Assistant | ✅ Yes | 2024.1.0 or newer |
+| Frigate NVR | ✅ Yes | 0.14.x or 0.17.x |
+| expose-camera-stream-source | ⚠️ For UniFi | Required to discover UniFi Protect cameras |
+| Camera integrations | ⚠️ Varies | Reolink, Amcrest, etc. as needed |
 
 ---
 
@@ -494,6 +555,10 @@ Camera adapters live in `discovery/`. See `discovery/base.py` for the interface.
 - ✨ YOLOv9 detector option for 0.17+
 - ✨ Improved LPR model defaults (0.17's "small" > 0.14's "large")
 - ✨ New Frigate Releases sensor - tracks latest stable/beta versions
+- ✨ Check Frigate Updates button - manual refresh from GitHub
+- ✨ Dahua camera support (same protocol as Amcrest)
+- ✨ Generic RTSP camera discovery
+- ⚡ Parallel camera discovery (all adapters run simultaneously)
 - 🔧 Version-aware config generation
 
 ### v0.4.0.4 (2026-01-17)
@@ -516,5 +581,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [Frigate NVR](https://frigate.video/) - The incredible NVR this generates configs for
-- [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) - For UniFi Protect RTSP URL extraction
+- [expose-camera-stream-source](https://github.com/felipecrs/hass-expose-camera-stream-source) - Essential for UniFi Protect RTSP URL extraction
 - [Home Assistant](https://www.home-assistant.io/) - The platform that makes this possible
