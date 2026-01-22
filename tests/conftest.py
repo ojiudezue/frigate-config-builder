@@ -1,7 +1,10 @@
 """Pytest configuration and fixtures for Frigate Config Builder tests.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.8
+Date: 2026-01-22
+
+Changelog:
+- 0.4.0.8: Added fixtures for 0.17 testing (mock_config_entry_017, mock_config_entry_017_genai)
 """
 from __future__ import annotations
 
@@ -46,6 +49,7 @@ class MockConfigEntry:
         "retain_detections": 30,
         "retain_motion": 7,
         "retain_snapshots": 30,
+        "frigate_version": "0.16",  # Default to 0.16
     })
     options: dict = field(default_factory=dict)
     state: str = "loaded"
@@ -326,7 +330,7 @@ def mock_hass() -> MockHomeAssistant:
 
 @pytest.fixture
 def mock_config_entry() -> MockConfigEntry:
-    """Create a mock config entry with default values."""
+    """Create a mock config entry with default values (Frigate 0.16)."""
     return MockConfigEntry()
 
 
@@ -341,6 +345,7 @@ def mock_config_entry_minimal() -> MockConfigEntry:
             "mqtt_auto": False,
             "mqtt_host": "localhost",
             "mqtt_port": 1883,
+            "frigate_version": "0.16",
         }
     )
 
@@ -368,6 +373,54 @@ def mock_config_entry_all_features() -> MockConfigEntry:
             "retain_detections": 30,
             "retain_motion": 7,
             "retain_snapshots": 30,
+            "frigate_version": "0.16",
+        }
+    )
+
+
+@pytest.fixture
+def mock_config_entry_017() -> MockConfigEntry:
+    """Create a config entry for Frigate 0.17."""
+    return MockConfigEntry(
+        data={
+            "output_path": "/config/www/frigate.yml",
+            "detector_type": "edgetpu",
+            "detector_device": "usb",
+            "hwaccel": "vaapi",
+            "mqtt_auto": True,
+            "audio_detection": True,
+            "birdseye_enabled": True,
+            "birdseye_mode": "objects",
+            "retain_alerts": 30,
+            "retain_detections": 30,
+            "retain_motion": 7,
+            "retain_snapshots": 30,
+            "frigate_version": "0.17",  # Frigate 0.17
+        }
+    )
+
+
+@pytest.fixture
+def mock_config_entry_017_genai() -> MockConfigEntry:
+    """Create a config entry for Frigate 0.17 with GenAI enabled."""
+    return MockConfigEntry(
+        data={
+            "output_path": "/config/www/frigate.yml",
+            "detector_type": "edgetpu",
+            "detector_device": "usb",
+            "hwaccel": "vaapi",
+            "mqtt_auto": True,
+            "audio_detection": True,
+            "birdseye_enabled": True,
+            "birdseye_mode": "objects",
+            "retain_alerts": 30,
+            "retain_detections": 30,
+            "retain_motion": 7,
+            "retain_snapshots": 30,
+            "frigate_version": "0.17",  # Frigate 0.17
+            "genai_enabled": True,  # GenAI enabled
+            "genai_provider": "gemini",
+            "genai_model": "gemini-2.0-flash",
         }
     )
 

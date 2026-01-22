@@ -1,9 +1,13 @@
 """Unit tests for the Frigate configuration generator.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.8
+Date: 2026-01-22
 
 Tests the generator.py module which creates Frigate YAML configuration.
+
+Changelog:
+- 0.4.0.8: Updated retention tests for correct 0.16/0.17 structures
+           Added tests for 0.17 features (stationary, review.genai, etc.)
 """
 from __future__ import annotations
 
@@ -138,22 +142,49 @@ class TestGeneratorHwaccel:
         
         assert ffmpeg_config["hwaccel_args"] == "preset-http-jpeg-generic"
 
+    def test_generate_hwaccel_gpu_index_017(self, mock_hass, mock_config_entry_017):
+        """Test GPU index for 0.17+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017)
+        ffmpeg_config = generator._build_ffmpeg()
+        
+        assert ffmpeg_config["gpu"] == 0
+
 
 class TestGeneratorRetention:
     """Tests for retention settings generation."""
 
-    def test_generate_retention_defaults(self, mock_hass, mock_config_entry):
-        """Test default retention settings."""
+    def test_generate_retention_defaults_016(self, mock_hass, mock_config_entry):
+        """Test default retention settings for Frigate 0.16."""
         from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
         
         generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
         record_config = generator._build_record()
         snapshots_config = generator._build_snapshots()
         
+        # 0.16 uses retain at top level
+        assert "retain" in record_config
+        assert record_config["retain"]["days"] >= 0
         assert record_config["alerts"]["retain"]["days"] == 30
         assert record_config["detections"]["retain"]["days"] == 30
-        assert record_config["events"]["retain"]["default"] == 7
         assert snapshots_config["retain"]["default"] == 30
+
+    def test_generate_retention_defaults_017(self, mock_hass, mock_config_entry_017):
+        """Test default retention settings for Frigate 0.17."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017)
+        record_config = generator._build_record()
+        
+        # 0.17 uses continuous/motion instead of retain at top level
+        assert "continuous" in record_config
+        assert "motion" in record_config
+        assert "retain" not in record_config  # No retain at top level
+        assert record_config["continuous"]["days"] >= 0
+        assert record_config["motion"]["days"] >= 0
+        assert record_config["alerts"]["retain"]["days"] == 30
+        assert record_config["detections"]["retain"]["days"] == 30
 
     def test_generate_retention_custom(self, mock_hass, mock_config_entry):
         """Test custom retention settings."""
@@ -170,8 +201,77 @@ class TestGeneratorRetention:
         
         assert record_config["alerts"]["retain"]["days"] == 60
         assert record_config["detections"]["retain"]["days"] == 45
-        assert record_config["events"]["retain"]["default"] == 14
         assert snapshots_config["retain"]["default"] == 90
+
+    def test_generate_retention_pre_post_capture(self, mock_hass, mock_config_entry):
+        """Test pre_capture and post_capture settings."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
+        record_config = generator._build_record()
+        
+        assert record_config["alerts"]["pre_capture"] == 5
+        assert record_config["alerts"]["post_capture"] == 5
+        assert record_config["detections"]["pre_capture"] == 5
+        assert record_config["detections"]["post_capture"] == 5
+
+
+class TestGeneratorDetect:
+    """Tests for detect configuration generation."""
+
+    def test_generate_detect_enabled_explicit(self, mock_hass, mock_config_entry):
+        """Test detect.enabled is explicitly set for 0.16+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
+        detect_config = generator._build_detect()
+        
+        # CRITICAL: 0.16+ defaults to false, we must set true
+        assert detect_config["enabled"] is True
+
+    def test_generate_detect_stationary_classifier_017(self, mock_hass, mock_config_entry_017):
+        """Test stationary classifier for 0.17+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017)
+        detect_config = generator._build_detect()
+        
+        assert "stationary" in detect_config
+        assert detect_config["stationary"]["classifier"] is True
+
+
+class TestGeneratorReview:
+    """Tests for review configuration generation."""
+
+    def test_generate_review_basic(self, mock_hass, mock_config_entry):
+        """Test basic review configuration."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
+        review_config = generator._build_review()
+        
+        assert review_config["alerts"]["enabled"] is True
+        assert review_config["detections"]["enabled"] is True
+
+    def test_generate_review_cutoff_time_017(self, mock_hass, mock_config_entry_017):
+        """Test review.cutoff_time for 0.17+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017)
+        review_config = generator._build_review()
+        
+        assert review_config["alerts"]["cutoff_time"] == 40
+        assert review_config["detections"]["cutoff_time"] == 30
+
+    def test_generate_review_genai_017(self, mock_hass, mock_config_entry_017_genai):
+        """Test review.genai for 0.17+ with GenAI enabled."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017_genai)
+        review_config = generator._build_review()
+        
+        assert "genai" in review_config
+        assert review_config["genai"]["enabled"] is True
 
 
 class TestGeneratorFeatures:
@@ -217,6 +317,52 @@ class TestGeneratorFeatures:
         assert audio_config["enabled"] is True
 
 
+class TestGeneratorBirdseye:
+    """Tests for birdseye configuration generation."""
+
+    def test_generate_birdseye_basic(self, mock_hass, mock_config_entry):
+        """Test basic birdseye configuration."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
+        birdseye_config = generator._build_birdseye()
+        
+        assert birdseye_config["enabled"] is True
+        assert birdseye_config["mode"] == "objects"
+
+    def test_generate_birdseye_idle_heartbeat_017(self, mock_hass, mock_config_entry_017):
+        """Test birdseye.idle_heartbeat_fps for 0.17+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017)
+        birdseye_config = generator._build_birdseye()
+        
+        assert birdseye_config["idle_heartbeat_fps"] == 0.0
+
+
+class TestGeneratorGenAI:
+    """Tests for GenAI configuration generation (0.17+)."""
+
+    def test_generate_genai_global_config(self, mock_hass, mock_config_entry_017_genai):
+        """Test global GenAI provider configuration."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017_genai)
+        genai_config = generator._build_genai()
+        
+        assert "provider" in genai_config
+
+    def test_generate_objects_genai_017(self, mock_hass, mock_config_entry_017_genai):
+        """Test objects.genai section for 0.17+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry_017_genai)
+        objects_config = generator._build_objects_with_genai()
+        
+        assert "genai" in objects_config
+        assert objects_config["genai"]["enabled"] is True
+
+
 class TestGeneratorCameras:
     """Tests for camera configuration generation."""
 
@@ -254,9 +400,14 @@ class TestGeneratorCameras:
         assert "detect" in cam_config["ffmpeg"]["inputs"][1]["roles"]
 
     def test_generate_camera_detect_dimensions(self, mock_hass, mock_config_entry, sample_unifi_camera):
-        """Test camera detect dimensions are set correctly."""
+        """Test camera detect dimensions are set correctly.
+        
+        CRITICAL: Dimensions should match native stream resolution exactly.
+        Frigate wastes CPU if it has to resize streams.
+        """
         from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
         
+        # Set native dimensions
         sample_unifi_camera.width = 640
         sample_unifi_camera.height = 360
         sample_unifi_camera.fps = 5
@@ -265,9 +416,20 @@ class TestGeneratorCameras:
         cameras_config = generator._build_cameras([sample_unifi_camera])
         
         detect_config = cameras_config["garage_a"]["detect"]
+        # Should use EXACT native dimensions
         assert detect_config["width"] == 640
         assert detect_config["height"] == 360
         assert detect_config["fps"] == 5
+
+    def test_generate_camera_detect_enabled_explicit(self, mock_hass, mock_config_entry, sample_unifi_camera):
+        """Test camera detect.enabled is explicit for 0.16+."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass, mock_config_entry)
+        cameras_config = generator._build_cameras([sample_unifi_camera])
+        
+        # CRITICAL: 0.16+ defaults to false, we must set true
+        assert cameras_config["garage_a"]["detect"]["enabled"] is True
 
 
 class TestGeneratorGo2rtc:
@@ -317,8 +479,8 @@ class TestGeneratorFullConfig:
     """Tests for complete configuration generation."""
 
     @pytest.mark.asyncio
-    async def test_generate_full_config(self, mock_hass_with_mqtt, mock_config_entry, sample_cameras):
-        """Test complete configuration generation."""
+    async def test_generate_full_config_016(self, mock_hass_with_mqtt, mock_config_entry, sample_cameras):
+        """Test complete configuration generation for 0.16."""
         from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
         
         generator = FrigateConfigGenerator(mock_hass_with_mqtt, mock_config_entry)
@@ -330,9 +492,33 @@ class TestGeneratorFullConfig:
         assert "mqtt" in config
         assert "detectors" in config
         assert "ffmpeg" in config
+        assert "detect" in config
+        assert "record" in config
         assert "cameras" in config
         assert "go2rtc" in config
         assert "version" in config
+        
+        # 0.16 should have retain at top level
+        assert "retain" in config["record"]
+
+    @pytest.mark.asyncio
+    async def test_generate_full_config_017(self, mock_hass_with_mqtt, mock_config_entry_017, sample_cameras):
+        """Test complete configuration generation for 0.17."""
+        from custom_components.frigate_config_builder.generator import FrigateConfigGenerator
+        
+        generator = FrigateConfigGenerator(mock_hass_with_mqtt, mock_config_entry_017)
+        yaml_output = await generator.generate(sample_cameras)
+        
+        config = yaml.safe_load(yaml_output)
+        
+        # 0.17 should have continuous/motion instead of retain
+        assert "continuous" in config["record"]
+        assert "motion" in config["record"]
+        assert "retain" not in config["record"]
+        
+        # 0.17 features
+        assert "stationary" in config["detect"]
+        assert config["detect"]["stationary"]["classifier"] is True
 
     @pytest.mark.asyncio
     async def test_generate_yaml_valid_syntax(self, mock_hass_with_mqtt, mock_config_entry, sample_cameras):

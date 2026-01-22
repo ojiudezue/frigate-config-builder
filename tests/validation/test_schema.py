@@ -1,10 +1,14 @@
 """Frigate schema validation tests.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.8
+Date: 2026-01-22
 
 Tests that generated configuration matches Frigate's expected schema.
 Uses validation rules based on Frigate's configuration reference.
+
+Changelog:
+- 0.4.0.8: Updated record tests for correct 0.16/0.17 structures
+           Added tests for 0.17 stationary classifier, review.genai
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ class TestSchemaDetectors:
     """Tests for detector configuration schema."""
 
     VALID_DETECTOR_TYPES = [
-        "edgetpu", "cpu", "openvino", "tensorrt", "rknn", "hailo8", "apple_coreml"
+        "edgetpu", "cpu", "openvino", "onnx", "rknn", "hailo8", "apple_coreml"
     ]
 
     VALID_EDGETPU_DEVICES = [
@@ -63,6 +67,19 @@ class TestSchemaDetectors:
         
         assert config["detectors"]["ov"]["type"] == "openvino"
         assert config["detectors"]["ov"]["device"] in ["CPU", "GPU", "AUTO"]
+
+    def test_detector_onnx_nvidia(self):
+        """Test ONNX detector for Nvidia (0.16+ replacement for tensorrt)."""
+        config = {
+            "detectors": {
+                "default": {
+                    "type": "onnx",
+                    "device": "cuda:0",
+                }
+            }
+        }
+        
+        assert config["detectors"]["default"]["type"] == "onnx"
 
 
 class TestSchemaMQTT:
@@ -124,6 +141,17 @@ class TestSchemaFFmpeg:
         # Should be either a preset string or a list of args
         assert config["ffmpeg"]["hwaccel_args"].startswith("preset-") or \
                isinstance(config["ffmpeg"]["hwaccel_args"], list)
+
+    def test_ffmpeg_gpu_index_017(self):
+        """Test FFmpeg gpu index for 0.17+."""
+        config = {
+            "ffmpeg": {
+                "hwaccel_args": "preset-vaapi",
+                "gpu": 0,
+            }
+        }
+        
+        assert config["ffmpeg"]["gpu"] == 0
 
 
 class TestSchemaCamera:
@@ -190,6 +218,65 @@ class TestSchemaCamera:
         assert 240 <= detect["height"] <= 2160
         assert 1 <= detect["fps"] <= 30
 
+    def test_camera_detect_native_dimensions(self):
+        """Test camera detect uses native stream dimensions.
+        
+        CRITICAL: Frigate wastes CPU if detect dimensions don't match
+        the native resolution of the stream.
+        """
+        # Native low-res stream at 640x360
+        native_width = 640
+        native_height = 360
+        
+        config = {
+            "cameras": {
+                "test": {
+                    "detect": {
+                        "enabled": True,
+                        "width": native_width,
+                        "height": native_height,
+                        "fps": 5,
+                    }
+                }
+            }
+        }
+        
+        # Should use EXACT native dimensions
+        assert config["cameras"]["test"]["detect"]["width"] == native_width
+        assert config["cameras"]["test"]["detect"]["height"] == native_height
+
+
+class TestSchemaDetect:
+    """Tests for global detect configuration schema."""
+
+    def test_detect_enabled_explicit(self):
+        """Test detect.enabled is explicit for 0.16+."""
+        config = {
+            "detect": {
+                "enabled": True,
+                "fps": 5,
+            }
+        }
+        
+        # 0.16+ defaults to false, must be explicit
+        assert config["detect"]["enabled"] is True
+
+    def test_detect_stationary_classifier_017(self):
+        """Test stationary classifier for 0.17+."""
+        config = {
+            "detect": {
+                "enabled": True,
+                "fps": 5,
+                "stationary": {
+                    "classifier": True,
+                    "interval": 50,
+                    "threshold": 50,
+                },
+            }
+        }
+        
+        assert config["detect"]["stationary"]["classifier"] is True
+
 
 class TestSchemaRecord:
     """Tests for record configuration schema."""
@@ -204,56 +291,164 @@ class TestSchemaRecord:
         
         assert isinstance(config["record"]["enabled"], bool)
 
-    def test_record_retention_structure(self):
-        """Test record retention structure (0.14+ format)."""
+    def test_record_retention_frigate_016(self):
+        """Test Frigate 0.16 record retention structure.
+        
+        0.16 uses retain.days/mode at top level for base retention.
+        """
         config = {
             "record": {
                 "enabled": True,
-                "alerts": {
-                    "retain": {
-                        "days": 30,
-                    }
+                "expire_interval": 60,
+                "retain": {
+                    "days": 1,
+                    "mode": "motion",
                 },
-                "detections": {
+                "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
                         "days": 14,
-                    }
+                        "mode": "motion",
+                    },
                 },
-                "events": {
+                "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
-                        "default": 7,
-                    }
+                        "days": 14,
+                        "mode": "motion",
+                    },
                 },
             }
         }
         
+        # 0.16 uses retain at top level
+        assert "retain" in config["record"]
+        assert config["record"]["retain"]["days"] >= 0
+        assert config["record"]["retain"]["mode"] in ["all", "motion", "active_objects"]
         assert config["record"]["alerts"]["retain"]["days"] >= 0
         assert config["record"]["detections"]["retain"]["days"] >= 0
 
     def test_record_retention_frigate_017_tiered(self):
-        """Test Frigate 0.17 tiered retention structure."""
+        """Test Frigate 0.17 tiered retention structure.
+        
+        0.17 removes record.retain and adds:
+        - continuous.days: for 24/7 recording
+        - motion.days: for motion-based retention
+        """
         config = {
             "record": {
                 "enabled": True,
-                "retain": {
-                    "days": 1,  # Continuous recordings
+                "expire_interval": 60,
+                "continuous": {
+                    "days": 0,
+                },
+                "motion": {
+                    "days": 1,
                 },
                 "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
-                        "days": 30,
-                    }
+                        "days": 14,
+                        "mode": "motion",
+                    },
                 },
                 "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
-                        "days": 30,
-                    }
+                        "days": 14,
+                        "mode": "motion",
+                    },
                 },
             }
         }
         
-        # 0.17 has separate continuous and alert/detection retention
-        assert "retain" in config["record"]
-        assert "alerts" in config["record"]
+        # 0.17 uses continuous/motion instead of retain at top level
+        assert "continuous" in config["record"]
+        assert "motion" in config["record"]
+        assert "retain" not in config["record"]  # No retain at top level for 0.17
+        assert config["record"]["continuous"]["days"] >= 0
+        assert config["record"]["motion"]["days"] >= 0
+
+    def test_record_pre_post_capture(self):
+        """Test pre_capture and post_capture settings."""
+        config = {
+            "record": {
+                "enabled": True,
+                "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
+                    "retain": {"days": 14},
+                },
+            }
+        }
+        
+        assert config["record"]["alerts"]["pre_capture"] == 5
+        assert config["record"]["alerts"]["post_capture"] == 5
+
+
+class TestSchemaReview:
+    """Tests for review configuration schema."""
+
+    def test_review_basic(self):
+        """Test basic review configuration."""
+        config = {
+            "review": {
+                "alerts": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                },
+                "detections": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                },
+            }
+        }
+        
+        assert config["review"]["alerts"]["enabled"] is True
+        assert "person" in config["review"]["alerts"]["labels"]
+
+    def test_review_cutoff_time_017(self):
+        """Test review.cutoff_time for 0.17+."""
+        config = {
+            "review": {
+                "alerts": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                    "cutoff_time": 40,
+                },
+                "detections": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                    "cutoff_time": 30,
+                },
+            }
+        }
+        
+        assert config["review"]["alerts"]["cutoff_time"] == 40
+        assert config["review"]["detections"]["cutoff_time"] == 30
+
+    def test_review_genai_017(self):
+        """Test review.genai for 0.17+."""
+        config = {
+            "review": {
+                "alerts": {
+                    "enabled": True,
+                },
+                "genai": {
+                    "enabled": True,
+                    "alerts": True,
+                    "detections": False,
+                    "image_source": "preview",
+                },
+            }
+        }
+        
+        assert config["review"]["genai"]["enabled"] is True
+        assert config["review"]["genai"]["image_source"] in ["preview", "snapshot"]
 
 
 class TestSchemaSnapshots:
@@ -314,6 +509,51 @@ class TestSchemaBirdseye:
         }
         
         assert config["birdseye"]["mode"] in self.VALID_BIRDSEYE_MODES
+
+    def test_birdseye_idle_heartbeat_017(self):
+        """Test birdseye.idle_heartbeat_fps for 0.17+."""
+        config = {
+            "birdseye": {
+                "enabled": True,
+                "mode": "objects",
+                "idle_heartbeat_fps": 0.0,
+            }
+        }
+        
+        assert config["birdseye"]["idle_heartbeat_fps"] == 0.0
+
+
+class TestSchemaGenAI:
+    """Tests for GenAI configuration schema (0.17+)."""
+
+    VALID_PROVIDERS = ["gemini", "ollama", "openai", "azure_openai"]
+
+    def test_genai_global_config(self):
+        """Test global GenAI provider configuration."""
+        config = {
+            "genai": {
+                "provider": "gemini",
+                "model": "gemini-2.0-flash",
+                "api_key": "{FRIGATE_GEMINI_API_KEY}",
+            }
+        }
+        
+        assert config["genai"]["provider"] in self.VALID_PROVIDERS
+
+    def test_genai_objects_section(self):
+        """Test objects.genai section for 0.17+."""
+        config = {
+            "objects": {
+                "track": ["person", "car"],
+                "genai": {
+                    "enabled": True,
+                    "use_snapshot": False,
+                    "objects": ["person", "car"],
+                },
+            }
+        }
+        
+        assert config["objects"]["genai"]["enabled"] is True
 
 
 class TestSchemaSemanticSearch:
@@ -385,15 +625,20 @@ class TestSchemaFullConfig:
         assert "mqtt" in config
         assert "cameras" in config
 
-    def test_complete_config_structure(self):
-        """Test complete configuration has expected sections."""
+    def test_complete_config_016(self):
+        """Test complete configuration for Frigate 0.16."""
         config = {
             "version": "0.14-1",
             "mqtt": {"host": "localhost"},
             "detectors": {"default": {"type": "cpu"}},
             "ffmpeg": {"hwaccel_args": "preset-http-jpeg-generic"},
             "detect": {"enabled": True},
-            "record": {"enabled": True},
+            "record": {
+                "enabled": True,
+                "retain": {"days": 1, "mode": "motion"},
+                "alerts": {"retain": {"days": 14}},
+                "detections": {"retain": {"days": 14}},
+            },
             "snapshots": {"enabled": True},
             "audio": {"enabled": True, "listen": ["bark"]},
             "birdseye": {"enabled": True, "mode": "objects"},
@@ -402,14 +647,45 @@ class TestSchemaFullConfig:
         }
         
         required_sections = ["mqtt", "cameras"]
-        optional_sections = [
-            "version", "detectors", "ffmpeg", "detect", "record",
-            "snapshots", "audio", "birdseye", "go2rtc"
-        ]
-        
         for section in required_sections:
             assert section in config
         
-        # All sections should be dicts
-        for key, value in config.items():
-            assert isinstance(value, (dict, str, bool, int, list))
+        # 0.16 has retain at top level
+        assert "retain" in config["record"]
+
+    def test_complete_config_017(self):
+        """Test complete configuration for Frigate 0.17."""
+        config = {
+            "version": "0.14-1",
+            "mqtt": {"host": "localhost"},
+            "detectors": {"default": {"type": "cpu"}},
+            "ffmpeg": {"hwaccel_args": "preset-http-jpeg-generic", "gpu": 0},
+            "detect": {
+                "enabled": True,
+                "stationary": {"classifier": True},
+            },
+            "record": {
+                "enabled": True,
+                "continuous": {"days": 0},
+                "motion": {"days": 1},
+                "alerts": {"retain": {"days": 14}},
+                "detections": {"retain": {"days": 14}},
+            },
+            "review": {
+                "alerts": {"enabled": True, "cutoff_time": 40},
+                "detections": {"enabled": True, "cutoff_time": 30},
+            },
+            "snapshots": {"enabled": True},
+            "birdseye": {"enabled": True, "mode": "objects", "idle_heartbeat_fps": 0.0},
+            "go2rtc": {"streams": {}},
+            "cameras": {},
+        }
+        
+        required_sections = ["mqtt", "cameras"]
+        for section in required_sections:
+            assert section in config
+        
+        # 0.17 has continuous/motion instead of retain
+        assert "continuous" in config["record"]
+        assert "motion" in config["record"]
+        assert "retain" not in config["record"]

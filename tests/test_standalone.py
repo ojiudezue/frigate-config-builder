@@ -1,10 +1,14 @@
 """Standalone tests that don't require Home Assistant dependencies.
 
-Version: 0.4.0.5
-Date: 2026-01-18
+Version: 0.4.0.8
+Date: 2026-01-22
 
 These tests can be run without installing homeassistant package.
 They validate YAML generation, schema compliance, and basic logic.
+
+Changelog:
+- 0.4.0.8: Updated record tests for correct 0.16/0.17 structures
+           Added tests for stationary classifier, review.genai, etc.
 """
 from __future__ import annotations
 
@@ -101,48 +105,138 @@ class TestYAMLGeneration:
         
         assert parsed["ffmpeg"]["hwaccel_args"] == "preset-vaapi"
 
-    def test_build_record_section(self):
-        """Test record section with retention settings."""
+    def test_build_ffmpeg_section_017_with_gpu(self):
+        """Test FFmpeg section with GPU index for 0.17+."""
+        ffmpeg = {
+            "hwaccel_args": "preset-vaapi",
+            "gpu": 0,
+        }
+        
+        yaml_str = yaml.dump({"ffmpeg": ffmpeg}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["ffmpeg"]["hwaccel_args"] == "preset-vaapi"
+        assert parsed["ffmpeg"]["gpu"] == 0
+
+    def test_build_record_section_frigate_016(self):
+        """Test Frigate 0.16 record section with retention settings.
+        
+        0.16 uses retain.days/mode at top level for base retention.
+        """
         record = {
             "enabled": True,
+            "expire_interval": 60,
+            "retain": {
+                "days": 1,
+                "mode": "motion",
+            },
             "alerts": {
-                "retain": {"days": 30}
+                "pre_capture": 5,
+                "post_capture": 5,
+                "retain": {
+                    "days": 14,
+                    "mode": "motion",
+                },
             },
             "detections": {
-                "retain": {"days": 14}
-            },
-            "events": {
-                "retain": {"default": 7}
+                "pre_capture": 5,
+                "post_capture": 5,
+                "retain": {
+                    "days": 14,
+                    "mode": "motion",
+                },
             },
         }
         
         yaml_str = yaml.dump({"record": record}, default_flow_style=False)
         parsed = yaml.safe_load(yaml_str)
         
-        assert parsed["record"]["alerts"]["retain"]["days"] == 30
+        # Verify 0.16 structure
+        assert parsed["record"]["retain"]["days"] == 1
+        assert parsed["record"]["retain"]["mode"] == "motion"
+        assert parsed["record"]["alerts"]["retain"]["days"] == 14
+        assert parsed["record"]["alerts"]["pre_capture"] == 5
         assert parsed["record"]["detections"]["retain"]["days"] == 14
-        assert parsed["record"]["events"]["retain"]["default"] == 7
+        # No continuous/motion keys at top level for 0.16
+        assert "continuous" not in parsed["record"]
 
     def test_build_record_section_frigate_017_tiered(self):
-        """Test Frigate 0.17 tiered retention."""
+        """Test Frigate 0.17 tiered retention structure.
+        
+        0.17 removes record.retain.days/mode and replaces with:
+        - continuous.days: for 24/7 recording regardless of activity
+        - motion.days: for motion-based retention
+        """
         record = {
             "enabled": True,
-            "retain": {
-                "days": 1,  # Continuous recordings
+            "expire_interval": 60,
+            "continuous": {
+                "days": 0,  # Only keep alerts/detections
+            },
+            "motion": {
+                "days": 1,  # Motion retention
             },
             "alerts": {
-                "retain": {"days": 30}
+                "pre_capture": 5,
+                "post_capture": 5,
+                "retain": {
+                    "days": 14,
+                    "mode": "motion",
+                },
             },
             "detections": {
-                "retain": {"days": 30}
+                "pre_capture": 5,
+                "post_capture": 5,
+                "retain": {
+                    "days": 14,
+                    "mode": "motion",
+                },
             },
         }
         
         yaml_str = yaml.dump({"record": record}, default_flow_style=False)
         parsed = yaml.safe_load(yaml_str)
         
-        assert parsed["record"]["retain"]["days"] == 1  # Continuous
-        assert parsed["record"]["alerts"]["retain"]["days"] == 30
+        # Verify 0.17 structure
+        assert parsed["record"]["continuous"]["days"] == 0
+        assert parsed["record"]["motion"]["days"] == 1
+        assert parsed["record"]["alerts"]["retain"]["days"] == 14
+        assert parsed["record"]["alerts"]["pre_capture"] == 5
+        assert parsed["record"]["detections"]["post_capture"] == 5
+        # No retain at top level for 0.17
+        assert "retain" not in parsed["record"]
+
+    def test_build_detect_section_016(self):
+        """Test detect section for 0.16."""
+        detect = {
+            "enabled": True,
+            "fps": 5,
+        }
+        
+        yaml_str = yaml.dump({"detect": detect}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["detect"]["enabled"] is True
+        assert parsed["detect"]["fps"] == 5
+        assert "stationary" not in parsed["detect"]
+
+    def test_build_detect_section_017_with_stationary(self):
+        """Test detect section with stationary classifier for 0.17+."""
+        detect = {
+            "enabled": True,
+            "fps": 5,
+            "stationary": {
+                "classifier": True,
+                "interval": 50,
+                "threshold": 50,
+            },
+        }
+        
+        yaml_str = yaml.dump({"detect": detect}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["detect"]["enabled"] is True
+        assert parsed["detect"]["stationary"]["classifier"] is True
 
     def test_build_audio_section(self):
         """Test audio detection section."""
@@ -170,6 +264,69 @@ class TestYAMLGeneration:
         parsed = yaml.safe_load(yaml_str)
         
         assert parsed["birdseye"]["mode"] == "objects"
+
+    def test_build_birdseye_section_017_with_heartbeat(self):
+        """Test birdseye section with idle_heartbeat_fps for 0.17+."""
+        birdseye = {
+            "enabled": True,
+            "mode": "objects",
+            "width": 2560,
+            "height": 1440,
+            "quality": 8,
+            "idle_heartbeat_fps": 0.0,
+        }
+        
+        yaml_str = yaml.dump({"birdseye": birdseye}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["birdseye"]["idle_heartbeat_fps"] == 0.0
+
+    def test_build_review_section_016(self):
+        """Test review section for 0.16."""
+        review = {
+            "alerts": {
+                "enabled": True,
+                "labels": ["car", "person"],
+            },
+            "detections": {
+                "enabled": True,
+                "labels": ["car", "person"],
+            },
+        }
+        
+        yaml_str = yaml.dump({"review": review}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["review"]["alerts"]["enabled"] is True
+        assert "cutoff_time" not in parsed["review"]["alerts"]
+
+    def test_build_review_section_017_with_cutoff_and_genai(self):
+        """Test review section with cutoff_time and GenAI for 0.17+."""
+        review = {
+            "alerts": {
+                "enabled": True,
+                "labels": ["car", "person"],
+                "cutoff_time": 40,
+            },
+            "detections": {
+                "enabled": True,
+                "labels": ["car", "person"],
+                "cutoff_time": 30,
+            },
+            "genai": {
+                "enabled": True,
+                "alerts": True,
+                "detections": False,
+                "image_source": "preview",
+            },
+        }
+        
+        yaml_str = yaml.dump({"review": review}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["review"]["alerts"]["cutoff_time"] == 40
+        assert parsed["review"]["detections"]["cutoff_time"] == 30
+        assert parsed["review"]["genai"]["enabled"] is True
 
     def test_build_camera_single_stream(self):
         """Test camera with single stream."""
@@ -320,6 +477,29 @@ class TestCameraDataProcessing:
         assert str(port) in url
         assert username in url
 
+    def test_native_dimensions_no_scaling(self):
+        """Test that detect dimensions match native stream resolution.
+        
+        CRITICAL: Frigate wastes CPU if detect dimensions don't match
+        the native resolution of the stream.
+        """
+        # Simulate getting native dimensions from entity state
+        state_attrs = {
+            "width": 640,
+            "height": 360,
+        }
+        
+        # Detection should use EXACT native dimensions
+        detect_width = state_attrs["width"]
+        detect_height = state_attrs["height"]
+        
+        assert detect_width == 640
+        assert detect_height == 360
+        
+        # Verify no scaling was applied
+        assert detect_width == state_attrs["width"]
+        assert detect_height == state_attrs["height"]
+
 
 class TestCompleteConfigGeneration:
     """Tests for complete configuration generation."""
@@ -353,8 +533,8 @@ class TestCompleteConfigGeneration:
         assert parsed["mqtt"]["host"] == "localhost"
         assert parsed["detectors"]["default"]["type"] == "cpu"
 
-    def test_generate_full_config_with_cameras(self):
-        """Test full configuration with cameras."""
+    def test_generate_full_config_frigate_016(self):
+        """Test full configuration for Frigate 0.16."""
         config = {
             "version": "0.14-1",
             "mqtt": {
@@ -374,12 +554,25 @@ class TestCompleteConfigGeneration:
             },
             "detect": {
                 "enabled": True,
+                "fps": 5,
             },
             "record": {
                 "enabled": True,
-                "alerts": {"retain": {"days": 30}},
-                "detections": {"retain": {"days": 14}},
-                "events": {"retain": {"default": 7}},
+                "expire_interval": 60,
+                "retain": {
+                    "days": 1,
+                    "mode": "motion",
+                },
+                "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
+                    "retain": {"days": 14, "mode": "motion"},
+                },
+                "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
+                    "retain": {"days": 14, "mode": "motion"},
+                },
             },
             "snapshots": {
                 "enabled": True,
@@ -407,7 +600,7 @@ class TestCompleteConfigGeneration:
                             {"path": "rtsp://192.168.1.10/sub", "roles": ["detect"]},
                         ]
                     },
-                    "detect": {"width": 640, "height": 480, "fps": 5},
+                    "detect": {"enabled": True, "width": 640, "height": 480, "fps": 5},
                 },
                 "garage": {
                     "ffmpeg": {
@@ -415,7 +608,7 @@ class TestCompleteConfigGeneration:
                             {"path": "rtsp://192.168.1.11/stream", "roles": ["detect", "record", "audio"]},
                         ]
                     },
-                    "detect": {"width": 640, "height": 360, "fps": 5},
+                    "detect": {"enabled": True, "width": 640, "height": 360, "fps": 5},
                 },
             },
         }
@@ -426,7 +619,114 @@ class TestCompleteConfigGeneration:
         # Verify structure
         assert len(parsed["cameras"]) == 2
         assert len(parsed["go2rtc"]["streams"]) == 2
-        assert parsed["record"]["alerts"]["retain"]["days"] == 30
+        # 0.16 uses retain at top level
+        assert parsed["record"]["retain"]["days"] == 1
+
+    def test_generate_full_config_frigate_017(self):
+        """Test full configuration for Frigate 0.17."""
+        config = {
+            "version": "0.14-1",
+            "mqtt": {
+                "host": "192.168.1.100",
+                "port": 1883,
+            },
+            "detectors": {
+                "default": {
+                    "type": "edgetpu",
+                    "device": "usb",
+                }
+            },
+            "ffmpeg": {
+                "hwaccel_args": "preset-vaapi",
+                "gpu": 0,
+            },
+            "detect": {
+                "enabled": True,
+                "fps": 5,
+                "stationary": {
+                    "classifier": True,
+                    "interval": 50,
+                    "threshold": 50,
+                },
+            },
+            "record": {
+                "enabled": True,
+                "expire_interval": 60,
+                "continuous": {"days": 0},
+                "motion": {"days": 1},
+                "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
+                    "retain": {"days": 14, "mode": "motion"},
+                },
+                "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
+                    "retain": {"days": 14, "mode": "motion"},
+                },
+            },
+            "review": {
+                "alerts": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                    "cutoff_time": 40,
+                },
+                "detections": {
+                    "enabled": True,
+                    "labels": ["car", "person"],
+                    "cutoff_time": 30,
+                },
+                "genai": {
+                    "enabled": True,
+                    "alerts": True,
+                    "detections": False,
+                },
+            },
+            "birdseye": {
+                "enabled": True,
+                "mode": "objects",
+                "idle_heartbeat_fps": 0.0,
+            },
+            "genai": {
+                "provider": "gemini",
+                "model": "gemini-2.0-flash",
+            },
+            "objects": {
+                "track": ["person", "car"],
+                "genai": {
+                    "enabled": True,
+                    "objects": ["person", "car"],
+                },
+            },
+            "go2rtc": {
+                "streams": {
+                    "front_door": ["rtspx://192.168.1.10/main"],
+                }
+            },
+            "cameras": {
+                "front_door": {
+                    "ffmpeg": {
+                        "inputs": [
+                            {"path": "rtsp://192.168.1.10/main", "roles": ["record", "audio"]},
+                            {"path": "rtsp://192.168.1.10/sub", "roles": ["detect"]},
+                        ]
+                    },
+                    "detect": {"enabled": True, "width": 640, "height": 360, "fps": 5},
+                },
+            },
+        }
+        
+        yaml_str = yaml.dump(config, default_flow_style=False, sort_keys=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        # Verify 0.17 structure
+        assert parsed["record"]["continuous"]["days"] == 0
+        assert parsed["record"]["motion"]["days"] == 1
+        assert "retain" not in parsed["record"]  # No retain at top level
+        assert parsed["detect"]["stationary"]["classifier"] is True
+        assert parsed["review"]["alerts"]["cutoff_time"] == 40
+        assert parsed["birdseye"]["idle_heartbeat_fps"] == 0.0
+        assert parsed["ffmpeg"]["gpu"] == 0
 
     def test_yaml_output_validity(self):
         """Test that generated YAML is valid."""
@@ -530,11 +830,14 @@ class TestFrigate017Compatibility:
 
     def test_tiered_retention_structure(self):
         """Test 0.17 tiered retention structure."""
-        # 0.17 separates continuous from alerts/detections
+        # 0.17 uses continuous/motion instead of retain at top level
         record_017 = {
             "enabled": True,
-            "retain": {
-                "days": 1,  # Continuous recordings
+            "continuous": {
+                "days": 0,
+            },
+            "motion": {
+                "days": 1,
             },
             "alerts": {
                 "retain": {"days": 30}
@@ -547,9 +850,9 @@ class TestFrigate017Compatibility:
         yaml_str = yaml.dump({"record": record_017}, default_flow_style=False)
         parsed = yaml.safe_load(yaml_str)
         
-        assert "retain" in parsed["record"]  # Top-level continuous
-        assert "alerts" in parsed["record"]
-        assert "detections" in parsed["record"]
+        assert "continuous" in parsed["record"]
+        assert "motion" in parsed["record"]
+        assert "retain" not in parsed["record"]  # No retain at top level
 
     def test_genai_config_structure(self):
         """Test 0.17 GenAI configuration structure."""
@@ -561,31 +864,67 @@ class TestFrigate017Compatibility:
             "model": "gemini-2.0-flash",
         }
         
-        # Per-camera genai under cameras.X.genai
-        camera_genai = {
-            "enabled": True,
-            "use_snapshot": True,
-            "objects": ["person"],
-            "required_zones": ["front_yard"],
+        # Object GenAI under objects.genai (not per-camera)
+        objects = {
+            "track": ["person", "car"],
+            "genai": {
+                "enabled": True,
+                "objects": ["person"],
+            },
         }
         
         config = {
             "genai": genai,
-            "cameras": {
-                "front_door": {
-                    "genai": camera_genai,
-                    "ffmpeg": {
-                        "inputs": [{"path": "rtsp://test", "roles": ["detect"]}]
-                    },
-                }
-            },
+            "objects": objects,
         }
         
         yaml_str = yaml.dump(config, default_flow_style=False)
         parsed = yaml.safe_load(yaml_str)
         
         assert parsed["genai"]["provider"] == "gemini"
-        assert parsed["cameras"]["front_door"]["genai"]["enabled"] is True
+        assert parsed["objects"]["genai"]["enabled"] is True
+
+    def test_review_genai_structure(self):
+        """Test 0.17 review.genai structure."""
+        review = {
+            "alerts": {
+                "enabled": True,
+                "cutoff_time": 40,
+            },
+            "detections": {
+                "enabled": True,
+                "cutoff_time": 30,
+            },
+            "genai": {
+                "enabled": True,
+                "alerts": True,
+                "detections": False,
+                "image_source": "preview",
+            },
+        }
+        
+        yaml_str = yaml.dump({"review": review}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["review"]["genai"]["enabled"] is True
+        assert parsed["review"]["alerts"]["cutoff_time"] == 40
+
+    def test_stationary_classifier_config(self):
+        """Test 0.17 stationary classifier configuration."""
+        detect = {
+            "enabled": True,
+            "fps": 5,
+            "stationary": {
+                "classifier": True,
+                "interval": 50,
+                "threshold": 50,
+            },
+        }
+        
+        yaml_str = yaml.dump({"detect": detect}, default_flow_style=False)
+        parsed = yaml.safe_load(yaml_str)
+        
+        assert parsed["detect"]["stationary"]["classifier"] is True
 
     def test_yolov9_detector_config(self):
         """Test YOLOv9 detector configuration for 0.17."""

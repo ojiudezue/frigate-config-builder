@@ -1,9 +1,12 @@
 """UniFi Protect camera discovery adapter.
 
-Version: 0.2.2.0
-Date: 2026-01-17
+Version: 0.2.3.0
+Date: 2026-01-22
 
 Changelog:
+- 0.2.3.0: FIXED - Use native low-res stream dimensions without scaling.
+           Frigate should use the exact native resolution of the detect stream
+           to avoid wasting CPU on unnecessary resizing.
 - 0.2.2.0: FIXED - Access camera entity's stream_source() method directly via
   hass.data["camera"].get_entity(). No HTTP calls needed since we're running
   inside Home Assistant. This is what expose-camera-stream-source does internally.
@@ -45,6 +48,9 @@ class UniFiProtectAdapter(CameraAdapter):
     This adapter retrieves RTSP URLs by directly accessing the camera entity's
     stream_source() method via hass.data["camera"].get_entity(). This is the
     same approach that expose-camera-stream-source uses internally.
+    
+    IMPORTANT: Detect dimensions use the NATIVE resolution of the low-res stream.
+    Frigate wastes CPU if it has to resize streams to different dimensions.
     """
 
     @property
@@ -210,8 +216,9 @@ class UniFiProtectAdapter(CameraAdapter):
         # Get area
         area = self._get_entity_area(high_entity, area_reg)
 
-        # Get detect dimensions from low-res entity attributes
-        detect_width, detect_height = self._get_detect_dimensions(low_entity or high_entity)
+        # Get NATIVE detect dimensions from low-res entity attributes
+        # CRITICAL: Do NOT scale - use exact native resolution
+        detect_width, detect_height = self._get_native_dimensions(low_entity or high_entity)
 
         # Ensure URL has enableSrtp param for Frigate
         record_url = self._format_rtsp_url(record_url)
@@ -221,6 +228,14 @@ class UniFiProtectAdapter(CameraAdapter):
         go2rtc_url = record_url.replace("rtsps://", "rtspx://")
         if "?" in go2rtc_url:
             go2rtc_url = go2rtc_url.split("?")[0]
+
+        _LOGGER.debug(
+            "Camera %s detect dimensions: %dx%d (native from %s)",
+            cam_name,
+            detect_width,
+            detect_height,
+            "low-res" if low_entity else "high-res",
+        )
 
         return DiscoveredCamera(
             id=f"unifi_{cam_name}",
@@ -258,6 +273,9 @@ class UniFiProtectAdapter(CameraAdapter):
         available = state.state != "unavailable" if state else False
         area = self._get_entity_area(entity, area_reg)
 
+        # Get native dimensions for package camera
+        width, height = self._get_native_dimensions(entity)
+
         stream_url = self._format_rtsp_url(stream_url)
         go2rtc_url = stream_url.replace("rtsps://", "rtspx://")
         if "?" in go2rtc_url:
@@ -273,8 +291,8 @@ class UniFiProtectAdapter(CameraAdapter):
             record_url=stream_url,
             detect_url=stream_url,
             go2rtc_url=go2rtc_url,
-            width=400,  # Package cameras are smaller
-            height=300,
+            width=width,
+            height=height,
             area=area,
             available=available,
         )
@@ -367,30 +385,58 @@ class UniFiProtectAdapter(CameraAdapter):
             return area.name if area else None
         return None
 
-    def _get_detect_dimensions(
+    def _get_native_dimensions(
         self,
         entity: er.RegistryEntry,
     ) -> tuple[int, int]:
-        """Get detection dimensions from entity attributes.
+        """Get NATIVE dimensions from entity attributes.
 
-        Returns reasonable dimensions for Frigate detection (max 640px wide).
+        CRITICAL: Returns the exact native resolution of the stream.
+        DO NOT scale or modify these dimensions - Frigate will waste CPU
+        if it has to resize streams to different dimensions.
+
+        The detect stream should use its native resolution. If using a
+        low-res stream at 640x360, use exactly 640x360. If using a
+        high-res stream at 1920x1080, use exactly 1920x1080.
         """
         state = self.hass.states.get(entity.entity_id) if entity else None
         if not state:
+            # Fallback to reasonable defaults for UniFi low-res streams
+            _LOGGER.debug(
+                "No state for entity, using default 640x360 dimensions"
+            )
             return 640, 360
 
         attrs = state.attributes
-        width = attrs.get("width", 640)
-        height = attrs.get("height", 360)
+        width = attrs.get("width")
+        height = attrs.get("height")
 
-        # Scale down if too large (Frigate detect shouldn't exceed ~640px)
-        if width > 1280:
-            ratio = height / width
-            width = 640
-            height = int(640 * ratio)
-        elif width > 640:
-            ratio = height / width
-            width = 640
-            height = int(640 * ratio)
+        # Validate we got actual dimensions
+        if width is None or height is None:
+            _LOGGER.debug(
+                "Entity %s missing width/height attributes, using defaults",
+                entity.entity_id,
+            )
+            return 640, 360
 
+        # Ensure they're integers
+        try:
+            width = int(width)
+            height = int(height)
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Invalid dimensions for %s: width=%s, height=%s",
+                entity.entity_id,
+                width,
+                height,
+            )
+            return 640, 360
+
+        # Return native dimensions without any scaling
+        _LOGGER.debug(
+            "Native dimensions for %s: %dx%d",
+            entity.entity_id,
+            width,
+            height,
+        )
         return width, height

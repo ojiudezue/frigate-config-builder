@@ -1,20 +1,33 @@
 """Frigate configuration generator.
 
-Version: 0.4.0.7
-Date: 2026-01-19
+Version: 0.4.0.8
+Date: 2026-01-22
 
 Generates Frigate NVR configuration files optimized for the selected Frigate version.
 
 Supported versions:
 - 0.16.x (stable): Current stable release
-- 0.17.x (latest): Beta/latest with GenAI, tiered retention
+- 0.17.x (latest): Latest with GenAI, tiered retention, stationary classifier
 
 Key version differences handled:
 - 0.16+: detect.enabled defaults to false (we always set true)
 - 0.16+: TensorRT removed, use ONNX for Nvidia
 - 0.16+: go2rtc accepts any audio codec
-- 0.17+: Tiered retention (alerts/detections separate from motion)
-- 0.17+: GenAI config at global level only configures provider
+- 0.16+: record.retain for base retention, alerts/detections separate
+- 0.17+: record.continuous/motion replaces record.retain
+- 0.17+: detect.stationary.classifier added
+- 0.17+: review.genai for AI review summaries
+- 0.17+: GenAI config split: global provider + objects.genai
+- 0.17+: birdseye.idle_heartbeat_fps added
+
+Changelog:
+- 0.4.0.8: FIXED - Correct 0.17 record structure (continuous/motion instead of retain)
+           FIXED - Remove invalid events section from 0.16
+           FIXED - Use native stream resolution for detect (no scaling)
+           ADDED - detect.stationary.classifier for 0.17+
+           ADDED - review.genai section for 0.17+
+           ADDED - birdseye.idle_heartbeat_fps for 0.17+
+           ADDED - alerts/detections pre_capture/post_capture
 """
 from __future__ import annotations
 
@@ -124,6 +137,9 @@ class FrigateConfigGenerator:
         config["record"] = self._build_record()
         config["snapshots"] = self._build_snapshots()
 
+        # Review configuration (with GenAI support for 0.17+)
+        config["review"] = self._build_review()
+
         # Audio detection
         if self._data.get(CONF_AUDIO_DETECTION, True):
             config["audio"] = self._build_audio()
@@ -145,9 +161,11 @@ class FrigateConfigGenerator:
         if self._data.get(CONF_BIRD_CLASSIFICATION, False):
             config["classification"] = {"bird": {"enabled": True}}
 
-        # GenAI (Frigate 0.17+ only)
+        # GenAI (Frigate 0.17+ only - global provider config)
         if self.is_017_or_later and self._data.get(CONF_GENAI_ENABLED, False):
             config["genai"] = self._build_genai()
+            # Also add objects.genai for object descriptions
+            config["objects"] = self._build_objects_with_genai()
 
         # go2rtc streams
         if cameras:
@@ -255,32 +273,52 @@ class FrigateConfigGenerator:
         hwaccel = self._data.get(CONF_HWACCEL, DEFAULT_HWACCEL)
         preset = FFMPEG_HWACCEL_PRESETS.get(hwaccel, "preset-vaapi")
 
-        return {
+        config: dict[str, Any] = {
             "hwaccel_args": preset,
         }
+
+        # Frigate 0.17+ supports gpu index
+        if self.is_017_or_later:
+            config["gpu"] = 0
+
+        return config
 
     def _build_detect(self) -> dict[str, Any]:
         """Build default detect configuration section.
 
         CRITICAL: In Frigate 0.16+, detection is DISABLED by default.
         We must explicitly set enabled: true for detection to work.
+
+        Note: width/height here are global defaults. Camera-specific values
+        should use the native stream resolution without scaling.
         """
-        return {
+        config: dict[str, Any] = {
             "enabled": True,
-            "width": 640,
-            "height": 360,
             "fps": 5,
         }
+
+        # Frigate 0.17+ adds stationary object classifier
+        if self.is_017_or_later:
+            config["stationary"] = {
+                "classifier": True,
+                "interval": 50,
+                "threshold": 50,
+            }
+
+        return config
 
     def _build_record(self) -> dict[str, Any]:
         """Build record configuration section.
 
-        Frigate 0.17 introduced fully tiered retention:
-        - record.retain: base retention for all recordings
-        - record.alerts.retain: retention for alert recordings
-        - record.detections.retain: retention for detection recordings
+        Frigate 0.17 changed the retention structure:
+        - REMOVED: record.retain.days and record.retain.mode
+        - ADDED: record.continuous.days (for 24/7 recording regardless of activity)
+        - ADDED: record.motion.days (for motion-based retention)
+        - alerts/detections now have pre_capture and post_capture
 
-        For 0.16, we use the older structure but it's forward-compatible.
+        Frigate 0.16 uses:
+        - record.retain.days and record.retain.mode for base retention
+        - alerts/detections with their own retain settings
         """
         retain_alerts = self._data.get(CONF_RETAIN_ALERTS, DEFAULT_RETAIN_ALERTS)
         retain_detections = self._data.get(CONF_RETAIN_DETECTIONS, DEFAULT_RETAIN_DETECTIONS)
@@ -288,50 +326,97 @@ class FrigateConfigGenerator:
 
         if self.is_017_or_later:
             # Frigate 0.17+ tiered retention structure
+            # Uses continuous/motion instead of retain at top level
             return {
                 "enabled": True,
-                "retain": {
+                "expire_interval": 60,
+                "continuous": {
+                    # Days to retain all recordings regardless of activity
+                    # Set to 0 to only keep alerts/detections/motion
+                    "days": 0,
+                },
+                "motion": {
+                    # Days to retain recordings with any detected motion
                     "days": retain_motion,
-                    "mode": "motion",
                 },
                 "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
                         "days": retain_alerts,
-                    }
+                        "mode": "motion",
+                    },
                 },
                 "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
                         "days": retain_detections,
-                    }
+                        "mode": "motion",
+                    },
                 },
             }
         else:
             # Frigate 0.16 structure
+            # Uses retain.days/mode at top level
             return {
                 "enabled": True,
+                "expire_interval": 60,
                 "retain": {
                     "days": retain_motion,
                     "mode": "motion",
                 },
                 "alerts": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
                         "days": retain_alerts,
                         "mode": "motion",
-                    }
+                    },
                 },
                 "detections": {
+                    "pre_capture": 5,
+                    "post_capture": 5,
                     "retain": {
                         "days": retain_detections,
                         "mode": "motion",
-                    }
-                },
-                "events": {
-                    "retain": {
-                        "default": retain_motion,
-                        "mode": "motion",
-                    }
+                    },
                 },
             }
+
+    def _build_review(self) -> dict[str, Any]:
+        """Build review configuration section.
+
+        Frigate 0.17 adds:
+        - cutoff_time for alerts and detections
+        - genai section for AI review summaries
+        """
+        config: dict[str, Any] = {
+            "alerts": {
+                "enabled": True,
+                "labels": ["car", "person"],
+            },
+            "detections": {
+                "enabled": True,
+                "labels": ["car", "person"],
+            },
+        }
+
+        if self.is_017_or_later:
+            # Add cutoff_time for 0.17+
+            config["alerts"]["cutoff_time"] = 40
+            config["detections"]["cutoff_time"] = 30
+
+            # Add GenAI review summaries if GenAI is enabled
+            if self._data.get(CONF_GENAI_ENABLED, False):
+                config["genai"] = {
+                    "enabled": True,
+                    "alerts": True,
+                    "detections": False,
+                    "image_source": "preview",
+                }
+
+        return config
 
     def _build_snapshots(self) -> dict[str, Any]:
         """Build snapshots configuration section."""
@@ -339,6 +424,7 @@ class FrigateConfigGenerator:
 
         return {
             "enabled": True,
+            "clean_copy": True,
             "timestamp": True,
             "bounding_box": True,
             "retain": {
@@ -363,13 +449,19 @@ class FrigateConfigGenerator:
         """Build birdseye configuration section."""
         mode = self._data.get(CONF_BIRDSEYE_MODE, DEFAULT_BIRDSEYE_MODE)
 
-        return {
+        config: dict[str, Any] = {
             "enabled": True,
             "mode": mode,
             "width": 2560,
             "height": 1440,
-            "quality": 80,
+            "quality": 8,
         }
+
+        # Frigate 0.17+ adds idle_heartbeat_fps
+        if self.is_017_or_later:
+            config["idle_heartbeat_fps"] = 0.0
+
+        return config
 
     def _build_semantic_search(self) -> dict[str, Any]:
         """Build semantic search configuration section."""
@@ -392,9 +484,8 @@ class FrigateConfigGenerator:
     def _build_genai(self) -> dict[str, Any]:
         """Build GenAI configuration section (Frigate 0.17+ only).
 
-        In 0.17, the global genai config only configures the provider.
-        Object-specific GenAI settings (like descriptions) are configured
-        per-camera under objects -> genai.
+        In 0.17, the global genai config configures the AI provider.
+        Object-specific GenAI settings are configured under objects -> genai.
         """
         provider = self._data.get(CONF_GENAI_PROVIDER, DEFAULT_GENAI_PROVIDER)
         model = self._data.get(CONF_GENAI_MODEL)
@@ -402,7 +493,6 @@ class FrigateConfigGenerator:
         base_url = self._data.get(CONF_GENAI_BASE_URL)
 
         config: dict[str, Any] = {
-            "enabled": True,
             "provider": provider,
         }
 
@@ -416,6 +506,21 @@ class FrigateConfigGenerator:
             config["base_url"] = base_url
 
         return config
+
+    def _build_objects_with_genai(self) -> dict[str, Any]:
+        """Build objects section with GenAI for object descriptions (0.17+)."""
+        return {
+            "track": ["person", "car", "dog", "cat"],
+            "genai": {
+                "enabled": True,
+                "use_snapshot": False,
+                "prompt": "Describe the {label} in the sequence of images with as much detail as possible. Do not describe the background.",
+                "objects": ["person", "car"],
+                "send_triggers": {
+                    "tracked_object_end": True,
+                },
+            },
+        }
 
     def _build_telemetry(self) -> dict[str, Any]:
         """Build telemetry configuration section."""
@@ -447,7 +552,12 @@ class FrigateConfigGenerator:
         return {"streams": streams}
 
     def _build_cameras(self, cameras: list[DiscoveredCamera]) -> dict[str, Any]:
-        """Build cameras configuration section."""
+        """Build cameras configuration section.
+
+        IMPORTANT: The detect width/height should match the NATIVE resolution
+        of the stream assigned the detect role. Frigate will waste CPU if it
+        has to resize the stream to different dimensions.
+        """
         result: dict[str, Any] = {}
         hwaccel = self._data.get(CONF_HWACCEL, DEFAULT_HWACCEL)
         hwaccel_preset = FFMPEG_HWACCEL_PRESETS.get(hwaccel, "preset-vaapi")
@@ -459,6 +569,7 @@ class FrigateConfigGenerator:
                     "inputs": [],
                 },
                 # CRITICAL for Frigate 0.16+: Must explicitly enable detection
+                # Use native stream dimensions without scaling
                 "detect": {
                     "enabled": True,
                     "width": cam.width,
